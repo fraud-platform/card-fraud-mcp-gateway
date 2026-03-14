@@ -1,0 +1,23 @@
+service: mcp-gateway
+version: "1.0"
+entrypoints:
+  service:
+    status:
+      command: [uv, run, gateway-check]
+      destructive: false
+      timeout_seconds: 90
+      mode: [suite]
+      description: Validate MCP gateway configuration and catalog.
+    health:
+      command: [uv, run, gateway-smoke]
+      destructive: false
+      timeout_seconds: 180
+      mode: [suite]
+      description: Run gateway smoke checks against health/ready/catalog.
+  verify:
+    runtime:
+      command: [uv, run, gateway-check]
+      destructive: false
+      timeout_seconds: 90
+      mode: [suite]
+      description: Verify MCP gateway runtime configuration.

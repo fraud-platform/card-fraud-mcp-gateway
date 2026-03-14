@@ -1,0 +1,114 @@
+# .dockerignore - Exclude from Docker build context
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# uv
+uv.lock
+
+# Testing / Linting
+.pytest_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+*.cover
+*.log
+.cache
+nosetests.xml
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.pydevproject
+.settings/
+*.sublime-project
+*.sublime-workspace
+
+# Environment
+.env
+.env.*
+*.local
+.envrc
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Documentation
+docs/
+*.md
+CLAUDE.md
+AGENTS.md
+README.md
+LICENSE
+CHANGELOG*
+
+# Claude Code
+.claude/
+
+# Tests
+tests/
+test_*.py
+*_test.py
+
+# Git
+.git/
+.gitignore
+.gitattributes
+.githooks/
+
+# Docker
+Dockerfile
+docker-compose*.yml
+.dockerignore
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+.travis.yml
+azure-pipelines.yml
+
+# Misc
+*.pid
+*.seed
+*.pid.lock
+.editorconfig
+Makefile

@@ -1,0 +1,62 @@
+# Pre-commit hooks for card-fraud-mcp-gateway
+# Install:
+#   uv run pre-commit install
+#   uv run pre-commit install --hook-type pre-push
+# Run manually:
+#   uv run pre-commit run --all-files
+#   uv run pre-commit run --all-files --hook-stage pre-push
+
+default_language_version:
+  python: python3.13
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+        name: trim trailing whitespace
+      - id: end-of-file-fixer
+        name: fix end of files
+      - id: check-added-large-files
+        name: check large files
+        args: [--maxkb=500]
+      - id: check-merge-conflict
+        name: check merge conflicts
+      - id: check-json
+        name: check json
+      - id: check-yaml
+        name: check yaml
+      - id: check-toml
+        name: check toml
+
+  - repo: local
+    hooks:
+      - id: ruff-lint
+        name: ruff lint
+        entry: uv run ruff check app/ tests/ cli/
+        language: system
+        types: [python]
+        stages: [pre-commit]
+
+      - id: ruff-format
+        name: ruff format
+        entry: uv run ruff format --check app/ tests/ cli/
+        language: system
+        types: [python]
+        stages: [pre-commit]
+
+      # Unit tests on pre-commit (fast tests only)
+      - id: unit-tests
+        name: unit tests
+        entry: uv run pytest tests/ -v -k "not e2e and not live_server" --tb=short
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]
+
+      # Full test suite on pre-push (includes e2e/live tests)
+      - id: full-tests
+        name: full test suite
+        entry: uv run pytest tests/ -v --tb=short
+        language: system
+        pass_filenames: false
+        stages: [pre-push]

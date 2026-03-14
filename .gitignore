@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
+.venv/
+venv/
+
+# uv
+uv.lock
+
+# Testing / Linting
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# IDE
+.vscode/
+.idea/
+
+# Local assistant/client config
+codex.toml
+.claude/
+AGENTS.md
+CLAUDE.md
+
+# Environment
+.env
+*.local
+
+# OS
+.DS_Store
+Thumbs.db

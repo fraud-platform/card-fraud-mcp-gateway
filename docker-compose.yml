@@ -1,0 +1,112 @@
+# Card Fraud MCP Gateway - Docker Compose
+#
+# This compose file runs the MCP gateway service connected to the shared card-fraud-platform infrastructure.
+#
+# Prerequisites:
+#   1. Start card-fraud-platform infrastructure first:
+#      cd ../card-fraud-platform && docker compose up -d
+#
+#   2. Or start all services including observability:
+#      cd ../card-fraud-platform && docker compose up -d
+#
+# Usage:
+#   docker compose up -d                    # Start gateway (requires platform running)
+#   docker compose logs -f                   # View logs
+#   docker compose down                     # Stop gateway
+#
+# The gateway connects to:
+#   - PostgreSQL (card-fraud-postgres:5432)
+#   - Redis (card-fraud-redis:6379)
+#   - Redpanda (redpanda:29092 internal listener)
+#   - MinIO (card-fraud-minio:9000)
+#   - Jaeger (card-fraud-jaeger:4317) for traces
+#   - Prometheus (card-fraud-prometheus:9090) for metrics
+#
+services:
+  gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: card-fraud-mcp-gateway
+    restart: unless-stopped
+    ports:
+      - "8005:8000"
+    environment:
+      # Runtime environment
+      APP_ENV: local
+      SECURITY_SKIP_JWT_VALIDATION: "true"
+
+      # PostgreSQL (connects to card-fraud-postgres)
+      GATEWAY_PG_DSN: "postgresql://postgres:${POSTGRES_ADMIN_PASSWORD}@card-fraud-postgres:5432/fraud_gov"
+      GATEWAY_PG_POOL_MIN: 2
+      GATEWAY_PG_POOL_MAX: 10
+      GATEWAY_PG_MAX_ROWS: 500
+      GATEWAY_PG_ALLOWED_SCHEMAS: "fraud_gov,public"
+      GATEWAY_PG_ALLOWED_TABLES: "transactions,transaction_cases,transaction_reviews,card_profiles,fraud_rules,velocity_records"
+
+      # Redis (connects to card-fraud-redis)
+      GATEWAY_REDIS_URL: "redis://card-fraud-redis:6379"
+      GATEWAY_REDIS_MAX_KEYS: 100
+      GATEWAY_REDIS_MAX_VALUE_BYTES: 10000
+      GATEWAY_REDIS_ALLOWED_PREFIXES: "fraud:,session:,rate:"
+
+      # Kafka/Redpanda (connects to card-fraud-redpanda)
+      GATEWAY_KAFKA_BROKERS: "redpanda:29092"
+      GATEWAY_KAFKA_MAX_MESSAGES: 10
+      GATEWAY_KAFKA_MAX_PAYLOAD_BYTES: 10000
+      # Include both legacy fraud.* and current fraud.card.* topics used by platform services.
+      GATEWAY_KAFKA_ALLOWED_TOPICS: "fraud.transactions,fraud.decisions,fraud.alerts,fraud.card.decisions.v1,test.fraud.decisions.v1"
+      GATEWAY_KAFKA_ALLOWED_GROUPS: "fraud-engine,card-fraud-engine"
+
+      # S3/MinIO (connects to card-fraud-minio)
+      GATEWAY_S3_ENDPOINT: "http://card-fraud-minio:9000"
+      GATEWAY_S3_ACCESS_KEY: "${MINIO_ROOT_USER:-minioadmin}"
+      GATEWAY_S3_SECRET_KEY: "${MINIO_ROOT_PASSWORD:-minioadmin}"
+      GATEWAY_S3_REGION: us-east-1
+      GATEWAY_S3_MAX_OBJECT_BYTES: 1000000
+      GATEWAY_S3_ALLOWED_BUCKETS: "fraud-gov-artifacts"
+      GATEWAY_S3_ALLOWED_PREFIXES: "fraud-gov-artifacts/"
+
+      # Ops domain tables
+      GATEWAY_OPS_TRANSACTIONS_TABLE: transactions
+      GATEWAY_OPS_CASES_TABLE: transaction_cases
+      GATEWAY_OPS_DECISIONS_TABLE: transaction_reviews
+
+      # Observability - connect to platform's Jaeger
+      GATEWAY_OTEL_ENDPOINT: "http://card-fraud-jaeger:4317"
+      GATEWAY_OTEL_SERVICE_NAME: card-fraud-mcp-gateway
+
+      # Rate limiting
+      GATEWAY_RATE_LIMIT_RPM: 120
+
+      # Security
+      GATEWAY_ENFORCE_ALLOWLISTS: "true"
+
+      # CORS (disabled by default)
+      GATEWAY_CORS_ORIGINS: "[]"
+
+      # Auth0 (optional - for production)
+      GATEWAY_AUTH0_DOMAIN: "${GATEWAY_AUTH0_DOMAIN:-}"
+      GATEWAY_AUTH0_AUDIENCE: "${GATEWAY_AUTH0_AUDIENCE:-https://card-fraud-mcp-gateway}"
+
+    networks:
+      - card-fraud-network
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+
+networks:
+  card-fraud-network:
+    name: card-fraud-network
+    external: true
