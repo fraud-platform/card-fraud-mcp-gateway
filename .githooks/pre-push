@@ -1,0 +1,38 @@
+#!/usr/bin/env sh
+set -eu
+
+is_agent_context() {
+  [ -n "${CODEX_THREAD_ID:-}" ] && return 0
+  [ -n "${CODEX_CI:-}" ] && return 0
+  [ -n "${CODEX_PROJECT_DIR:-}" ] && return 0
+  [ -n "${CLAUDE_PROJECT_DIR:-}" ] && return 0
+  [ -n "${CLAUDECODE:-}" ] && return 0
+  [ -n "${CLAUDE_CODE:-}" ] && return 0
+  return 1
+}
+
+if is_agent_context && [ "${CARD_FRAUD_ALLOW_GIT_PUSH:-}" != "1" ]; then
+  echo "BLOCKED: agent git push is disabled in this checkout." >&2
+  echo "Set CARD_FRAUD_ALLOW_GIT_PUSH=1 only for an explicitly requested push." >&2
+  exit 1
+fi
+
+remote_name="$1"
+branch="$(git branch --show-current)"
+if [ "$branch" != "main" ]; then
+  echo "BLOCKED: pushes are allowed only from local main. Current branch: ${branch:-detached}" >&2
+  exit 1
+fi
+if [ "$remote_name" != "origin" ]; then
+  echo "BLOCKED: pushes are allowed only to origin/main. Remote: ${remote_name:-unknown}" >&2
+  exit 1
+fi
+
+while read local_ref local_sha remote_ref remote_sha
+do
+  if [ "$local_ref" != "refs/heads/main" ] || [ "$remote_ref" != "refs/heads/main" ]; then
+    echo "BLOCKED: pushes are allowed only from local main to origin/main." >&2
+    echo "Requested refs: ${local_ref:-unknown} -> ${remote_ref:-unknown}" >&2
+    exit 1
+  fi
+done
