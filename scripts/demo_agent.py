@@ -124,19 +124,14 @@ err, text = call("platform.service_status", {"service_name": "card-fraud-engine"
 data = json.loads(text)
 status = data.get("status")
 service_type = data.get("type")
-print(
-    f"  platform.service_status(card-fraud-engine) -> status={status}, "
-    f"type={service_type}"
-)
+print(f"  platform.service_status(card-fraud-engine) -> status={status}, type={service_type}")
 
 err, text = call("platform.service_health", {"service_name": "card-fraud-mcp-gateway"})
 data = json.loads(text)
 health = data.get("health", {})
 healthy = health.get("healthy")
 reason = health.get("reason", "N/A")
-print(
-    f"  platform.service_health -> healthy={healthy}, reason={reason}"
-)
+print(f"  platform.service_health -> healthy={healthy}, reason={reason}")
 
 err, text = call("platform.ownership_summary")
 data = json.loads(text)
@@ -173,9 +168,7 @@ if not err and tables:
             col_name = col.get("column_name")
             col_type = col.get("data_type")
             col_nullable = col.get("is_nullable")
-            print(
-                f"    {col_name:<25} {col_type:<20} nullable={col_nullable}"
-            )
+            print(f"    {col_name:<25} {col_type:<20} nullable={col_nullable}")
     else:
         print(f"  postgres.describe_table -> ERROR: {text2[:100]}")
 
@@ -252,9 +245,7 @@ if not err:
         if not err2:
             data2 = json.loads(text2)
             partition_count = data2.get("partition_count")
-            print(
-                f"  kafka.describe_topic({first_topic}) -> partitions={partition_count}"
-            )
+            print(f"  kafka.describe_topic({first_topic}) -> partitions={partition_count}")
         err3, text3 = call("kafka.peek_messages", {"topic": first_topic, "max_messages": 3})
         if not err3:
             data3 = json.loads(text3)

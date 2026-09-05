@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Enterprise MCP gateway for the Card Fraud platform."
 requires-python = ">=3.14"
 dependencies = [
-    "mcp>=1.0",
+    "mcp>=1.0,<2",
     "uvicorn[standard]>=0.30",
     "starlette>=0.40",
     "pydantic-settings>=2.0",

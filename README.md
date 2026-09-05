@@ -74,6 +74,7 @@ card-fraud-mcp-gateway/
 - Redis/Kafka/S3/Postgres access is constrained by allowlists.
 - Sensitive output is redacted before returning to clients.
 - Local JWT bypass is only valid with `APP_ENV=local`.
+- Runtime and manual gateway checks use the gateway M2M client-credentials flow only. This repository does not use the development `Local Test Client`, role passwords, or a password-realm login loop.
 
 ## Sibling Repo Integration
 

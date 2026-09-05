@@ -1,5 +1,9 @@
 # Codemap
 
+Auth boundary: gateway authentication is JWT validation plus scope enforcement;
+token acquisition is M2M client credentials. No role-user or password-realm
+login is performed by this repository.
+
 ## Purpose
 
 `card-fraud-mcp-gateway` provides a single enterprise MCP surface over the Card Fraud suite.

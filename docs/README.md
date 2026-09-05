@@ -1,5 +1,9 @@
 # Card Fraud MCP Gateway Documentation
 
+Auth0 boundary: the gateway uses its own M2M client-credentials application
+and does not perform human/password-realm logins. The development `Local Test
+Client` belongs only to role-specific portal/rule-management testing.
+
 ## Documentation Standards
 
 - Keep published docs inside `docs/01-setup` through `docs/07-reference`.

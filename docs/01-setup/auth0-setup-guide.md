@@ -137,3 +137,9 @@ curl -s -X POST https://$AUTH0_MGMT_DOMAIN/oauth/token \
 ```
 
 The returned `access_token` can be used as a `Bearer` token against the `/mcp` endpoint.
+
+This gateway intentionally does not use the shared development `Local Test
+Client` or canonical role-user passwords. It obtains at most the gateway M2M
+token needed for a process/manual check; do not add a password-realm login per
+request or per MCP tool call. Role-specific human-token testing is owned by
+`card-fraud-intelligence-portal` and `card-fraud-rule-management`.
