@@ -38,8 +38,7 @@ def test_readonly_default():
     create_mcp_server()
     policies = get_all_policies()
     rw_tools = {name for name, p in policies.items() if not p.read_only}
-    # Only ops.run_investigation should be non-readonly
-    assert rw_tools == {"ops.run_investigation"}, f"Unexpected RW tools: {rw_tools}"
+    assert rw_tools == set(), f"Unexpected RW tools: {rw_tools}"
 
 
 def test_server_registration_clears_stale_policies():

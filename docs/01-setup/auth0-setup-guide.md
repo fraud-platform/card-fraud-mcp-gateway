@@ -15,7 +15,7 @@ how to verify it worked.
 | Requirement | Notes |
 |-------------|-------|
 | Doppler access | `doppler login` with the org account |
-| `card-fraud-mcp-gateway` Doppler project | `local` and `prod` configs must exist |
+| `card-fraud-mcp-gateway` Doppler project | `local` and `test` configs must exist |
 | `AUTH0_MGMT_CLIENT_SECRET` in Doppler `local` config | Shared management M2M secret — get from a team member |
 
 ---
@@ -59,25 +59,17 @@ uv run auth0-bootstrap --yes --verbose
 ```
 
 The bootstrap automatically syncs `GATEWAY_AUTH0_CLIENT_ID` and
-`GATEWAY_AUTH0_CLIENT_SECRET` to both the `local` and `prod` Doppler configs.
+`GATEWAY_AUTH0_CLIENT_SECRET` to both the `local` and `test` Doppler configs. Production
+credentials remain an explicit release-time configuration boundary.
 
 ---
 
-## Step 2 — Enable RBAC in the Auth0 dashboard
+## Step 2 — Verify the automated RBAC settings
 
-This step **cannot be automated** via the Management API — it must be done once in the
-Auth0 dashboard:
-
-1. Open [https://manage.auth0.com](https://manage.auth0.com)
-2. Navigate to **Applications → APIs → Card Fraud MCP Gateway API**
-3. Click the **Settings** tab
-4. Under **RBAC Settings**, enable:
-   - ✅ **Enable RBAC**
-   - ✅ **Add Permissions in the Access Token**
-5. Click **Save Changes**
-
-Without this step, issued tokens will not include scopes and all tool calls will be
-rejected with `403 Forbidden`.
+`auth0-bootstrap` configures RBAC through the Auth0 Management API by setting
+`enforce_policies=true` and `token_dialect=access_token_authz` on the resource server.
+No dashboard mutation is required. `auth0-verify` checks those fields, the seven
+scopes, the M2M application, and its client grant.
 
 ---
 
@@ -87,7 +79,8 @@ rejected with `403 Forbidden`.
 uv run auth0-verify
 ```
 
-Expected output: all checks pass (exit code 0).
+Expected output: all checks pass (exit code 0), including RBAC policy enforcement and
+permissions in access tokens.
 
 ```
 [1] API Resource Server — https://card-fraud-mcp-gateway

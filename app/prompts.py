@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
 
-def register(mcp: FastMCP) -> None:
+def register(mcp: MCPServer) -> None:
     @mcp.prompt(
         name="investigate-transaction",
         description="Step-by-step investigation of a suspicious transaction.",

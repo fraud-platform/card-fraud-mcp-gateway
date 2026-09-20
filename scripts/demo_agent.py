@@ -120,13 +120,13 @@ print(f"  platform.inventory -> {data['count']} services:")
 for s in data.get("services", []):
     print(f"    {s['name']:<38} type={s['type']:<14} owner={s['owner']}")
 
-err, text = call("platform.service_status", {"service_name": "card-fraud-engine"})
+err, text = call("platform.service_status", {"service_name": "rule-engine-auth"})
 data = json.loads(text)
 status = data.get("status")
 service_type = data.get("type")
-print(f"  platform.service_status(card-fraud-engine) -> status={status}, type={service_type}")
+print(f"  platform.service_status(rule-engine-auth) -> status={status}, type={service_type}")
 
-err, text = call("platform.service_health", {"service_name": "card-fraud-mcp-gateway"})
+err, text = call("platform.service_health", {"service_name": "mcp-gateway"})
 data = json.loads(text)
 health = data.get("health", {})
 healthy = health.get("healthy")
@@ -148,26 +148,26 @@ if not err:
 else:
     print(f"  postgres.list_schemas -> ERROR: {text[:100]}")
 
-err, text = call("postgres.list_tables", {"schema": "public"})
+err, text = call("postgres.list_tables", {"schema": "fraud_gov"})
 if not err:
     data = json.loads(text)
-    tables = [t.get("table_name") for t in data.get("tables", [])]
-    print(f"  postgres.list_tables(public) -> {len(tables)} tables: {tables[:8]}")
+    tables = [t.get("name") for t in data.get("tables", [])]
+    print(f"  postgres.list_tables(fraud_gov) -> {len(tables)} tables: {tables[:8]}")
 else:
     print(f"  postgres.list_tables -> ERROR: {text[:100]}")
 
 # Pick the first available table to describe
 if not err and tables:
     first_table = tables[0]
-    err2, text2 = call("postgres.describe_table", {"table": first_table, "schema": "public"})
+    err2, text2 = call("postgres.describe_table", {"table": first_table, "schema": "fraud_gov"})
     if not err2:
         data2 = json.loads(text2)
         cols = data2.get("columns", [])
         print(f"  postgres.describe_table({first_table}) -> {len(cols)} columns:")
         for col in cols[:5]:
-            col_name = col.get("column_name")
-            col_type = col.get("data_type")
-            col_nullable = col.get("is_nullable")
+            col_name = col.get("name")
+            col_type = col.get("type")
+            col_nullable = col.get("nullable")
             print(f"    {col_name:<25} {col_type:<20} nullable={col_nullable}")
     else:
         print(f"  postgres.describe_table -> ERROR: {text2[:100]}")
@@ -176,20 +176,21 @@ err, text = call(
     "postgres.query_readonly",
     {
         "sql": (
-            "SELECT table_name, "
-            "pg_size_pretty(pg_total_relation_size(quote_ident(table_name)::text)) AS size "
-            "FROM information_schema.tables "
-            "WHERE table_schema = 'public' "
-            "ORDER BY table_name LIMIT 10"
+            "SELECT transaction_id, transaction_amount, decision "
+            "FROM fraud_gov.transactions "
+            "ORDER BY transaction_timestamp DESC LIMIT 5"
         )
     },
 )
 if not err:
     data = json.loads(text)
     rows = data.get("rows", [])
-    print(f"  postgres.query_readonly (table sizes) -> {len(rows)} rows:")
+    print(f"  postgres.query_readonly (recent transactions) -> {len(rows)} rows:")
     for row in rows:
-        print(f"    {row.get('table_name', '?'):<30} {row.get('size', '?')}")
+        print(
+            f"    {row.get('transaction_id', '?')} "
+            f"amount={row.get('transaction_amount', '?')} decision={row.get('decision', '?')}"
+        )
 else:
     print(f"  postgres.query_readonly -> ERROR: {text[:120]}")
 
@@ -293,10 +294,13 @@ else:
 # OPS DOMAIN
 section("OPS DOMAIN -- cross-domain investigation")
 
-err, text = call("ops.get_investigation_context", {"transaction_id": "txn_001"})
+demo_transaction_id = "a1eebc99-9c0b-4ef8-bb6d-6bb9bd380a11"
+err, text = call("ops.get_investigation_context", {"transaction_id": demo_transaction_id})
 if not err:
     data = json.loads(text)
-    print(f"  ops.get_investigation_context(txn_001) -> sources={data.get('sources')}")
+    print(
+        f"  ops.get_investigation_context({demo_transaction_id}) -> sources={data.get('sources')}"
+    )
     if data.get("transaction"):
         txn = data["transaction"]
         print(f"    transaction: {txn}")
@@ -308,14 +312,15 @@ else:
     print(f"  ops.get_investigation_context -> ERROR: {text[:120]}")
 
 err, text = call(
-    "ops.run_investigation", {"investigation_type": "transaction_review", "target_id": "txn_001"}
+    "ops.run_investigation",
+    {"investigation_type": "transaction_review", "target_id": demo_transaction_id},
 )
 if not err:
     data = json.loads(text)
     investigation_status = data.get("status")
     steps = [s.get("step") for s in data.get("steps", [])]
     print(
-        f"  ops.run_investigation(transaction_review, txn_001) -> "
+        f"  ops.run_investigation(transaction_review, {demo_transaction_id}) -> "
         f"status={investigation_status}, steps={steps}"
     )
 else:
@@ -324,7 +329,7 @@ else:
 # PROMPTS
 section("PROMPTS -- 5 guided investigation workflows")
 for name, args in [
-    ("investigate-transaction", {"transaction_id": "txn_001"}),
+    ("investigate-transaction", {"transaction_id": demo_transaction_id}),
     ("triage-platform-health", {}),
     ("review-consumer-lag", {"group_id": "fraud-processor"}),
 ]:

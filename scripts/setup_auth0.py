@@ -300,11 +300,8 @@ def main(yes: bool = False, verbose: bool = False) -> None:
     print("Bootstrap complete.")
     print()
     print("Next steps:")
-    print("  1. Enable RBAC on the API in Auth0 Dashboard:")
-    print("     Applications → APIs → Card Fraud MCP Gateway API → Settings")
-    print("     → Enable RBAC + Add Permissions in Access Token")
-    print("  2. Verify: uv run auth0-verify --verbose")
-    print("  3. Start gateway: uv run doppler-local")
+    print("  1. Verify: uv run auth0-verify --verbose")
+    print("  2. Start gateway: uv run doppler-local")
 
 
 if __name__ == "__main__":

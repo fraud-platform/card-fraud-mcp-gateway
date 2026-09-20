@@ -72,6 +72,15 @@ class Settings(BaseSettings):
     platform_api_url: str = ""
     platform_api_token: str = ""
     services_file: str = ""  # Path to services.yaml (optional, overrides static inventory)
+    mcp_allowed_hosts: list[str] = Field(
+        default_factory=lambda: [
+            "localhost:*",
+            "127.0.0.1:*",
+            "card-fraud-mcp-gateway:*",
+            "mcp-gateway:*",
+        ]
+    )
+    required_backends: list[str] = Field(default=[])
 
     # Allowlists — config-driven access control for backend domains
     pg_allowed_schemas: list[str] = Field(default=[])
@@ -83,7 +92,8 @@ class Settings(BaseSettings):
     s3_allowed_prefixes: list[str] = Field(default=[])  # format: "bucket/prefix"
 
     # Ops domain — table names used by investigation tools
-    # Note: Table names only (without schema), schema is determined at query time
+    # Table names are resolved within the explicitly configured schema.
+    ops_schema: str = "fraud_gov"
     ops_transactions_table: str = "transactions"
     ops_cases_table: str = "transaction_cases"
     ops_decisions_table: str = "transaction_reviews"
@@ -167,6 +177,8 @@ class Settings(BaseSettings):
         "s3_allowed_buckets",
         "s3_allowed_prefixes",
         "cors_origins",
+        "required_backends",
+        "mcp_allowed_hosts",
         mode="before",
     )
     @classmethod
@@ -194,6 +206,19 @@ class Settings(BaseSettings):
     @property
     def kafka_broker_list(self) -> list[str]:
         return [b.strip() for b in self.kafka_brokers.split(",") if b.strip()]
+
+    @property
+    def readiness_required_backends(self) -> frozenset[str]:
+        """Return environment-aware readiness requirements.
+
+        Production requires every backend; local/test environments require only
+        explicitly configured backends unless an operator supplies an override.
+        """
+        if self.required_backends:
+            return frozenset(self.required_backends)
+        if self.app_env == AppEnvironment.PROD:
+            return frozenset({"postgres", "redis", "kafka", "s3", "platform_api"})
+        return frozenset()
 
 
 settings = Settings()

@@ -14,7 +14,7 @@ import structlog
 
 from app.metrics import record_tool_invocation
 from app.security.auth import get_caller, get_request_context
-from app.security.redaction import redact
+from app.security.redaction import redact, redact_value
 
 
 def tool_result(data: Any, *, default: Any = None) -> str:
@@ -157,6 +157,9 @@ def _sanitize_value(key: str, value: Any) -> Any:
     if isinstance(value, tuple):
         return tuple(_sanitize_value(key, v) for v in value[:20])
 
+    if isinstance(value, set):
+        return {redact_value(v) for v in list(value)[:20]}
+
     return value
 
 
@@ -252,22 +255,7 @@ def init_sentry(
 
 def _sanitize_sentry_mapping(data: dict[str, Any]) -> dict[str, Any]:
     """Redact sensitive key/value pairs from Sentry payload maps."""
-    sensitive = {"authorization", "password", "token", "cookie", "set-cookie", "api-key"}
-    result: dict[str, Any] = {}
-    for key, value in data.items():
-        key_str = str(key)
-        if key_str.lower() in sensitive:
-            result[key_str] = "***REDACTED***"
-            continue
-        if isinstance(value, str):
-            result[key_str] = redact(value)
-        elif isinstance(value, dict):
-            result[key_str] = _sanitize_sentry_mapping(value)
-        elif isinstance(value, list):
-            result[key_str] = [redact(v) if isinstance(v, str) else v for v in value[:50]]
-        else:
-            result[key_str] = value
-    return result
+    return {str(key): redact_value(value, key=str(key)) for key, value in list(data.items())[:50]}
 
 
 def _sentry_before_breadcrumb(

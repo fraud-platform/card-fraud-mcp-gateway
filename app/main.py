@@ -12,6 +12,11 @@ from contextlib import asynccontextmanager
 from typing import cast
 from urllib.parse import unquote, urlsplit
 
+import jwt
+from mcp.server.transport_security import (
+    TransportSecurityMiddleware,
+    TransportSecuritySettings,
+)
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
@@ -30,7 +35,10 @@ from app.metrics import (
     render_prometheus_metrics,
 )
 from app.security.auth import (
+    InvalidTokenError,
+    JwksUnavailableError,
     authenticate_request,
+    reset_caller,
     reset_request_context,
     set_caller,
     set_request_context,
@@ -162,47 +170,83 @@ class AuthMiddleware:
         request_id = request.headers.get("x-request-id") or str(uuid.uuid4())
         source_ip = request.client.host if request.client else None
         request_meta = set_request_context(request_id, source_ip)
-
-        path = _normalize_request_path(request)
-        if path in self.SKIP_PATHS:
-            reset_request_context(request_meta)
-            await self.app(scope, receive, send)
-            return
-
+        caller_token = None
         try:
-            caller = await authenticate_request(request)
-            set_caller(caller)
-        except PermissionError as exc:
-            record_auth_failure("unauthorized")
-            response = JSONResponse({"error": "unauthorized", "detail": str(exc)}, status_code=401)
-            response.raw_headers = response.raw_headers + list(_SECURITY_HEADERS)
-            await response(scope, receive, send)
-            reset_request_context(request_meta)
-            return
+            path = _normalize_request_path(request)
+            if path in self.SKIP_PATHS:
+                await self.app(scope, receive, send)
+                return
 
-        # Rate limiting (per client_id or sub)
-        rate_key = caller.client_id or caller.sub
-        allowed, _remaining = await check_rate_limit(rate_key)
-        if not allowed:
-            record_rate_limited()
-            response = JSONResponse(
-                {"error": "rate_limited", "detail": "Too many requests. Try again later."},
-                status_code=429,
-                headers={"Retry-After": "60", "X-RateLimit-Remaining": "0"},
-            )
-            response.raw_headers = response.raw_headers + list(_SECURITY_HEADERS)
-            await response(scope, receive, send)
-            reset_request_context(request_meta)
-            return
+            try:
+                caller = await authenticate_request(request)
+                caller_token = set_caller(caller)
+            except JwksUnavailableError:
+                record_auth_failure("jwks_unavailable")
+                response = JSONResponse(
+                    {
+                        "error": "authentication_unavailable",
+                        "detail": "Authentication service unavailable.",
+                    },
+                    status_code=503,
+                )
+                response.raw_headers = response.raw_headers + list(_SECURITY_HEADERS)
+                await response(scope, receive, send)
+                return
+            except PermissionError, jwt.InvalidTokenError, InvalidTokenError:
+                record_auth_failure("unauthorized")
+                response = JSONResponse(
+                    {"error": "unauthorized", "detail": "Invalid or missing credentials."},
+                    status_code=401,
+                )
+                response.raw_headers = response.raw_headers + list(_SECURITY_HEADERS)
+                await response(scope, receive, send)
+                return
 
-        async def send_with_security_headers(message: dict[str, object]) -> None:
-            _add_security_headers(message)
-            await send(message)
+            # Rate limiting (per client_id or sub)
+            rate_key = caller.client_id or caller.sub
+            allowed, _remaining = await check_rate_limit(rate_key)
+            if not allowed:
+                record_rate_limited()
+                response = JSONResponse(
+                    {"error": "rate_limited", "detail": "Too many requests. Try again later."},
+                    status_code=429,
+                    headers={"Retry-After": "60", "X-RateLimit-Remaining": "0"},
+                )
+                response.raw_headers = response.raw_headers + list(_SECURITY_HEADERS)
+                await response(scope, receive, send)
+                return
 
-        try:
+            async def send_with_security_headers(message: dict[str, object]) -> None:
+                _add_security_headers(message)
+                await send(message)
+
             await self.app(scope, receive, send_with_security_headers)
         finally:
+            if caller_token is not None:
+                reset_caller(caller_token)
             reset_request_context(request_meta)
+
+
+class McpTransportSecurityMiddleware:
+    """Reject invalid MCP transport headers before authentication is attempted."""
+
+    def __init__(self, app, settings: TransportSecuritySettings):
+        self.app = app
+        self.security = TransportSecurityMiddleware(settings)
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http" and scope.get("path", "").rstrip("/") == "/mcp":
+            request = Request(scope, receive)
+            response = await self.security.validate_request(
+                request,
+                is_post=scope.get("method") == "POST",
+            )
+            if response is not None:
+                response.raw_headers = response.raw_headers + list(_SECURITY_HEADERS)
+                await response(scope, receive, send)
+                return
+
+        await self.app(scope, receive, send)
 
 
 class ObservabilityMiddleware:
@@ -255,11 +299,11 @@ async def lifespan(_app: Starlette) -> AsyncIterator[None]:
     )
     await init_all()
     # Starlette does NOT propagate lifespan events to sub-apps mounted via Mount().
-    # FastMCP's streamable_http_app() has its own lifespan that calls
+    # MCPServer's streamable_http_app() has its own lifespan that calls
     # session_manager.run() — but since it's a sub-mount, that lifespan never fires.
     # We must explicitly start the session manager here so its anyio task group is
     # initialized before the first MCP request arrives.
-    sm = getattr(_main_mcp, "_session_manager", None)
+    sm = getattr(_main_mcp, "session_manager", None)
     if sm is not None:
         async with sm.run():
             yield
@@ -283,6 +327,14 @@ async def _check_s3_connectivity() -> None:
         await s3.list_buckets()
 
 
+async def _check_platform_connectivity() -> None:
+    """Probe the platform API rather than merely checking client construction."""
+    from app.backends import get_platform_client
+
+    response = await get_platform_client().get("/api/v1/health")
+    response.raise_for_status()
+
+
 async def _check_backend(checker: Callable[[], object], *, configured: bool) -> str:
     if not configured:
         return "not_configured"
@@ -299,33 +351,43 @@ async def readiness(_request: Request) -> JSONResponse:
     from app.backends import (
         _kafka_manager,
         _pg_manager,
-        _platform_manager,
         _redis_manager,
-        _s3_manager,
     )
     from app.domains.kafka import list_visible_topics
 
-    checks: dict[str, str] = {
-        "postgres": await _check_backend(
-            lambda: _pg_manager.get().fetchval("SELECT 1"), configured=_pg_manager.is_configured
+    configured = {
+        "postgres": bool(settings.pg_dsn),
+        "redis": bool(settings.redis_url),
+        "kafka": bool(settings.kafka_broker_list),
+        "s3": bool(settings.s3_endpoint),
+        "platform_api": bool(settings.platform_api_url),
+    }
+    probes = {
+        "postgres": _check_backend(
+            lambda: _pg_manager.get().fetchval("SELECT 1"), configured=configured["postgres"]
         ),
-        "redis": await _check_backend(
-            lambda: _redis_manager.get().ping(), configured=_redis_manager.is_configured
+        "redis": _check_backend(
+            lambda: _redis_manager.get().ping(), configured=configured["redis"]
         ),
-        "kafka": await _check_backend(
+        "kafka": _check_backend(
             lambda: list_visible_topics(_kafka_manager.get()),
-            configured=_kafka_manager.is_configured,
+            configured=configured["kafka"],
         ),
-        "s3": await _check_backend(_check_s3_connectivity, configured=_s3_manager.is_configured),
-        "platform_api": await _check_backend(
-            lambda: _platform_manager.get(),
-            configured=_platform_manager.is_configured,
+        "s3": _check_backend(_check_s3_connectivity, configured=configured["s3"]),
+        "platform_api": _check_backend(
+            _check_platform_connectivity,
+            configured=configured["platform_api"],
         ),
     }
+    statuses = await asyncio.gather(*probes.values())
+    checks = dict(zip(probes, statuses, strict=True))
 
-    healthy = all(v in ("ok", "not_configured") for v in checks.values())
+    required = settings.readiness_required_backends
+    healthy = all(checks.get(name) == "ok" for name in required) and all(
+        value != "error" for value in checks.values()
+    )
     return JSONResponse(
-        {"ready": healthy, "backends": checks},
+        {"ready": healthy, "required_backends": sorted(required), "backends": checks},
         status_code=200 if healthy else 503,
     )
 
@@ -399,7 +461,15 @@ def create_app() -> Starlette:
 
     mcp = _get_main_mcp()
     _main_mcp = mcp
-    mcp_app = mcp.streamable_http_app()
+    transport_security = TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=settings.mcp_allowed_hosts,
+        allowed_origins=settings.cors_origins,
+    )
+    mcp_app = mcp.streamable_http_app(
+        host=settings.host,
+        transport_security=transport_security,
+    )
 
     allow_credentials = _require_secure_cors(settings.cors_origins)
     routes = [
@@ -426,6 +496,7 @@ def create_app() -> Starlette:
     )
 
     app = AuthMiddleware(inner)
+    app = McpTransportSecurityMiddleware(app, transport_security)
     app = RequestSizeLimitMiddleware(app, max_bytes=settings.max_request_body_bytes)
     return ObservabilityMiddleware(app)
 

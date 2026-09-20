@@ -16,7 +16,14 @@ When running locally with `uv run doppler-local`, the gateway starts with
 
 ### Claude Code
 
-Add to your Claude Code MCP settings (`.claude/settings.json` or via the MCP UI):
+Register the server in your user config:
+
+```powershell
+claude mcp add --scope user --transport http card-fraud-gateway http://localhost:8005/mcp
+claude mcp get card-fraud-gateway
+```
+
+Equivalent JSON configuration:
 
 ```json
 {
@@ -67,7 +74,14 @@ export COPILOT_MCP_SERVER=http://localhost:8005/mcp
 
 ### Codex CLI
 
-In your `codex.toml` or the Codex project config:
+Register and verify the Streamable HTTP server:
+
+```powershell
+codex mcp add card-fraud-gateway --url http://localhost:8005/mcp
+codex mcp get card-fraud-gateway
+```
+
+Equivalent `config.toml` configuration:
 
 ```toml
 [mcp_servers]

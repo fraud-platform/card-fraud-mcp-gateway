@@ -351,19 +351,17 @@ class TestPolicyAndSecurity:
                 f"{tool}: got {policies[tool].scope}, expected {scope}"
             )
 
-    def test_all_tools_read_only_except_run_investigation(self):
+    def test_all_tools_are_read_only(self):
         from app.security.policy import get_all_policies
 
         policies = get_all_policies()
-        non_ro = [
-            n for n, p in policies.items() if not p.read_only and n != "ops.run_investigation"
-        ]
+        non_ro = [n for n, p in policies.items() if not p.read_only]
         assert non_ro == [], f"Unexpected RW tools: {non_ro}"
 
-    def test_ops_run_investigation_is_rw(self):
+    def test_ops_run_investigation_is_read_only(self):
         from app.security.policy import get_all_policies
 
-        assert get_all_policies()["ops.run_investigation"].read_only is False
+        assert get_all_policies()["ops.run_investigation"].read_only is True
 
     def test_scope_enforcement_denies_wrong_scope(self):
         """Caller with only db.read scope must not be able to call kafka tools."""

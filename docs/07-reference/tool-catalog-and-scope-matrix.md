@@ -25,7 +25,7 @@
 | storage | `s3.head_object` | read-only | `fraud.storage.read` |
 | storage | `s3.get_object` | read-only | `fraud.storage.read` |
 | ops | `ops.get_investigation_context` | read-only | `fraud.ops.investigation.read` |
-| ops | `ops.run_investigation` | controlled | `fraud.ops.investigation.run` |
+| ops | `ops.run_investigation` | read-only | `fraud.ops.investigation.run` |
 
 ## Phase 1 Resource Catalog
 
@@ -52,7 +52,7 @@
 - Config-driven allowlists are enforced across Postgres, Redis, Kafka, and S3 read surfaces.
 - `postgres.query_readonly` accepts an optional `parameters` list for positional bind values.
 - `/catalog` exports tools, resources, and prompts from the live registration set.
-- `ops.run_investigation` is the only non-read-only tool. It requires `fraud.ops.investigation.run` scope but has no approval gate.
+- `ops.run_investigation` performs bounded read queries in Phase 1 and is classified read-only. Its `.run` scope preserves a distinct operational permission boundary for future workflow expansion.
 
 ## Deferred Tools
 

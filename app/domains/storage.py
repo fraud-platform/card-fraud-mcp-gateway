@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
 from app.audit import audit_tool, tool_result
 from app.backends import get_s3_session
@@ -29,7 +29,7 @@ def _check_object_allowed(bucket: str, key: str) -> None:
     _check_prefix_allowed(bucket, key)
 
 
-def register(mcp: FastMCP) -> None:
+def register(mcp: MCPServer) -> None:
     @mcp.tool(
         name="s3.list_buckets",
         description=(

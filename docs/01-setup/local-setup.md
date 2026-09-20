@@ -46,13 +46,12 @@ docker compose up -d
 This starts Postgres, Redis, Redpanda (Kafka), and MinIO on their default local ports.
 
 If you want to run the gateway itself in Docker (instead of `uv run doppler-local`),
-set `POSTGRES_ADMIN_PASSWORD` from the platform Postgres container and start this repo's
-compose stack:
+start it with Doppler-injected dedicated reader credentials. The gateway must never
+receive the platform PostgreSQL administrator or MinIO root credentials:
 
 ```powershell
 # from card-fraud-mcp-gateway/
-$env:POSTGRES_ADMIN_PASSWORD=(docker inspect card-fraud-postgres --format "{{range .Config.Env}}{{println .}}{{end}}" | Select-String '^POSTGRES_PASSWORD=' | ForEach-Object {($_.ToString() -split '=',2)[1]})
-docker compose up -d --build gateway
+doppler run -- docker compose up -d --build gateway
 ```
 
 ---
@@ -119,7 +118,7 @@ Claude Code, GitHub Copilot, Codex CLI, and curl.
 ## Running tests
 
 ```bash
-uv run doppler-test               # full pytest suite via Doppler (302 tests)
+uv run doppler-test               # full pytest suite via Doppler
 uv run pytest tests/ -v           # direct pytest (requires SECURITY_SKIP_JWT_VALIDATION=true in shell)
 uv run gateway-smoke              # boot + hit /health /ready /catalog
 uv run gateway-export-catalog     # export catalog as JSON to stdout

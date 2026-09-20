@@ -12,6 +12,10 @@ import pytest
 # monkeypatch settings.skip_jwt_validation = False directly.
 os.environ.setdefault("APP_ENV", "local")
 os.environ.setdefault("SECURITY_SKIP_JWT_VALIDATION", "true")
+os.environ.setdefault(
+    "GATEWAY_MCP_ALLOWED_HOSTS",
+    '["testserver", "localhost:*", "127.0.0.1:*"]',
+)
 
 from app.config import Settings  # noqa: E402
 

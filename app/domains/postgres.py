@@ -6,7 +6,7 @@ import json
 import re
 from typing import Any
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
 from app.audit import audit_tool, tool_result
 from app.backends import get_pg_pool
@@ -361,7 +361,7 @@ async def _enforce_query_allowlists(
 # ---- Tool Registration ----
 
 
-def register(mcp: FastMCP) -> None:
+def register(mcp: MCPServer) -> None:
     @mcp.tool(
         name="postgres.list_schemas",
         description=(

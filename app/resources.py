@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import structlog
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
 from app.audit import tool_result
 from app.config import settings
@@ -13,7 +13,7 @@ from app.security.policy import ensure_scope
 _log = structlog.get_logger(__name__)
 
 
-def register(mcp: FastMCP) -> None:
+def register(mcp: MCPServer) -> None:
     @mcp.resource("fraud://platform/services")
     async def service_registry() -> str:
         """Service registry: all platform services with type and owner."""

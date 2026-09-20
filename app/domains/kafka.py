@@ -10,7 +10,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Any
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
 from app.audit import audit_tool, tool_result
 from app.backends import get_kafka_client
@@ -146,7 +146,7 @@ async def get_topic_partitions(client: Any, topic: str) -> set[int]:
     return set(partitions) if partitions else set()
 
 
-def register(mcp: FastMCP) -> None:
+def register(mcp: MCPServer) -> None:
     @mcp.tool(
         name="kafka.list_topics",
         description=(

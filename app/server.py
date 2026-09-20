@@ -1,25 +1,16 @@
-"""MCP server factory — creates FastMCP instance and registers all tools, resources, prompts."""
+"""MCP server factory — creates MCPServer and registers all tools, resources, prompts."""
 
 from __future__ import annotations
 
-from mcp.server.fastmcp import FastMCP
-from mcp.server.transport_security import TransportSecuritySettings
+from mcp.server.mcpserver import MCPServer
 
 from app.security.policy import clear_policies
 
 
-def create_mcp_server() -> FastMCP:
-    """Build the FastMCP server with all domains registered."""
+def create_mcp_server() -> MCPServer:
+    """Build the MCP server with all domains registered."""
     clear_policies()
-    # Disable FastMCP's built-in DNS rebinding protection.
-    # This protection is designed for local dev tools (e.g. Claude Desktop on 127.0.0.1).
-    # This gateway is an enterprise remote server that:
-    #   1. Binds to 0.0.0.0 and accepts connections from external MCP clients
-    #   2. Enforces its own Auth0 JWT authentication on every request
-    #   3. Is deployed behind a TLS-terminating reverse proxy
-    # Leaving it on blocks all legitimate external clients (Host header never matches
-    # the default allowlist of 127.0.0.1/localhost).
-    mcp = FastMCP(
+    mcp = MCPServer(
         "card-fraud-gateway",
         instructions=(
             "Enterprise MCP gateway for the Card Fraud platform. "
@@ -27,7 +18,6 @@ def create_mcp_server() -> FastMCP:
             "and platform services. All tools require authentication and are audited. "
             "Use the prompts for guided investigation workflows."
         ),
-        transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
     )
 
     # Domain tools — 22 tools across 6 domains

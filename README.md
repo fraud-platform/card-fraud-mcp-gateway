@@ -13,8 +13,8 @@ This service exposes a single Streamable HTTP MCP endpoint and provides a safe, 
 | MCP prompts | 5 implemented |
 | Auth | Auth0 JWT + scope enforcement |
 | Observability | OpenTelemetry + structured audit logs + Prometheus + Sentry hooks |
-| Security controls | SQL safety, allowlists, redaction, bounded payloads |
-| Test suite | 302 passing tests |
+| Security controls | SQL safety, allowlists, recursive redaction, bounded payloads |
+| Test suite | 318 passing tests |
 
 ## Prerequisites
 
@@ -32,7 +32,7 @@ card-fraud-mcp-gateway/
 │   ├── domains/                  # Domain tools (postgres/redis/kafka/storage/platform/ops)
 │   ├── security/                 # Auth, policy, allowlist, redaction
 │   ├── main.py                   # FastAPI app + health/readiness/catalog
-│   ├── server.py                 # FastMCP registration
+│   ├── server.py                 # MCPServer registration
 │   └── backends.py               # Backend lifecycle management
 ├── cli/                          # Helper CLIs (catalog check, auth0 bootstrap/verify)
 ├── tests/                        # Unit + runtime/e2e tests
@@ -75,6 +75,10 @@ card-fraud-mcp-gateway/
 - Sensitive output is redacted before returning to clients.
 - Local JWT bypass is only valid with `APP_ENV=local`.
 - Runtime and manual gateway checks use the gateway M2M client-credentials flow only. This repository does not use the development `Local Test Client`, role passwords, or a password-realm login loop.
+- Docker deployments require Doppler-injected `FRAUD_GOV_MCP_READER_PASSWORD`,
+  `FRAUD_GOV_MCP_S3_ACCESS_KEY`, and `FRAUD_GOV_MCP_S3_SECRET_KEY`. These provision
+  dedicated read-only database/object-storage principals; PostgreSQL admin and MinIO
+  root credentials are never passed to the gateway.
 
 ## Sibling Repo Integration
 
@@ -89,6 +93,9 @@ Live integration points:
 - MinIO: `card-fraud-minio` / internal `minio`
 - Jaeger OTLP: `card-fraud-jaeger`
 - Prometheus: `card-fraud-prometheus`
+- Ops investigations resolve unqualified transaction/review tables in the configured
+  `GATEWAY_OPS_SCHEMA` (default: `fraud_gov`) and join reviews through the transaction's
+  internal database ID while accepting the public transaction ID from MCP clients.
 
 ## Quick Start (Local via Doppler)
 
@@ -112,9 +119,8 @@ uv run gateway-check
 cd ..\card-fraud-platform
 doppler run -- uv run platform-up
 
-# In this repo (start MCP gateway)
+# In this repo (start MCP gateway with dedicated read-only credentials injected by Doppler)
 cd ..\card-fraud-mcp-gateway
-$env:POSTGRES_ADMIN_PASSWORD=(docker inspect card-fraud-postgres --format "{{range .Config.Env}}{{println .}}{{end}}" | Select-String '^POSTGRES_PASSWORD=' | ForEach-Object {($_.ToString() -split '=',2)[1]})
 docker compose up -d --build gateway
 
 # Verify
@@ -159,6 +165,7 @@ uv run gateway-smoke
 uv run gateway-export-catalog
 uv run auth0-bootstrap --yes --verbose
 uv run auth0-verify
+uv run gateway-snyk  # temporary export from uv.lock; no requirements.txt to maintain
 ```
 
 ## Validation Before Handoff
@@ -176,6 +183,7 @@ APP_ENV=local SECURITY_SKIP_JWT_VALIDATION=true uv run gateway-check
 - `docs/01-setup/local-setup.md`
 - `docs/01-setup/connecting-clients.md`
 - `docs/02-development/architecture.md`
+- `docs/02-development/mcp-framework-comparison-and-migration-plan.md`
 - `docs/04-testing/test-strategy.md`
 - `docs/07-reference/tool-catalog-and-scope-matrix.md`
 

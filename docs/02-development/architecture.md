@@ -116,7 +116,7 @@ Every backend must have its own restricted credential set.
 All 22 tools, 7 resources, and 5 prompts are implemented.
 Auth (JWT/Auth0), audit (structlog + OTel), rate limiting, config-driven allowlists,
 request-size limits, secret redaction, and CORS are in place.
-297 tests passing, 0 lint errors.
+The current test count is reported by `uv run pytest tests/ -q`; all tests must pass with 0 lint errors.
 
 Key gaps against plan:
 

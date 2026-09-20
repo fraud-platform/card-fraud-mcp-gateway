@@ -49,6 +49,16 @@ class TestResolveTableExpr:
             ops._resolve_table_expr("a.b.c")
 
 
+def test_build_select_sql_uses_configured_ops_schema(monkeypatch):
+    monkeypatch.setattr(ops.settings, "pg_allowed_schemas", None)
+    monkeypatch.setattr(ops.settings, "pg_allowed_tables", None)
+    monkeypatch.setattr(ops.settings, "ops_schema", "fraud_gov")
+
+    result = ops._build_select_sql("transactions", "WHERE transaction_id = $1")
+
+    assert 'FROM "fraud_gov"."transactions"' in result
+
+
 class TestCheckTableAllowed:
     def test_check_table_allowed_no_settings(self, monkeypatch):
         monkeypatch.setattr(ops.settings, "pg_allowed_schemas", None)

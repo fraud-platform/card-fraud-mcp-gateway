@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Enterprise MCP gateway for the Card Fraud platform."
 requires-python = ">=3.14"
 dependencies = [
-    "mcp>=1.0,<2",
+    "mcp>=2.2,<3",
     "uvicorn[standard]>=0.30",
     "starlette>=0.40",
     "pydantic-settings>=2.0",
@@ -25,6 +25,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+    "pip>=26.2.1",
     "pytest>=8.0",
     "pytest-asyncio>=0.24",
     "pytest-cov>=5.0",
@@ -40,6 +41,7 @@ doppler-local          = "cli.doppler_local:main"
 doppler-test           = "cli.doppler_local:test"
 auth0-bootstrap        = "cli.auth0_bootstrap:main"
 auth0-verify           = "cli.auth0_verify:main"
+gateway-snyk           = "cli.snyk_scan:main"
 
 [build-system]
 requires = ["hatchling"]

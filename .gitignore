@@ -10,11 +10,11 @@ build/
 venv/
 
 # uv
-uv.lock
 
 # Testing / Linting
 .pytest_cache/
 .ruff_cache/
+.snyk-scan-*/
 .coverage
 htmlcov/
 

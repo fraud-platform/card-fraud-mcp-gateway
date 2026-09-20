@@ -57,6 +57,10 @@ class TestPhoneRedaction:
     def test_local_hyphen_redacted(self):
         assert "REDACTED_PHONE" in redact("555-1234")
 
+    def test_uuid_is_not_mistaken_for_phone_number(self):
+        value = "019501a0-7e8b-8000-000000000001"
+        assert redact(value) == value
+
     def test_decimal_amount_not_redacted(self):
         # False positive: financial amounts must never be redacted
         assert "REDACTED" not in redact("9999.0000")
@@ -97,3 +101,10 @@ class TestDictRedaction:
         data = {"count": 42, "enabled": True}
         result = redact_dict(data)
         assert result == data
+
+    def test_deep_tuple_set_and_list_values_are_redacted(self):
+        data = {"outer": [({"token": "secret-value"}, {"Bearer eyJsecret"})]}
+        result = redact_dict(data)
+        nested_tuple = result["outer"][0]
+        assert nested_tuple[0]["token"] == "***REDACTED***"
+        assert "eyJsecret" not in nested_tuple[1]

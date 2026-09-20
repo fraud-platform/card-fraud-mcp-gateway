@@ -150,7 +150,7 @@ class TestS3SessionContextManager:
             patch("app.domains.storage.get_s3_session", return_value=fake_session),
             patch("app.security.policy.get_caller", return_value=caller),
         ):
-            from mcp.server.fastmcp import FastMCP
+            from mcp.server.mcpserver import MCPServer as FastMCP
 
             from app.domains.storage import register
 
@@ -188,7 +188,7 @@ class TestS3SessionContextManager:
             # Bypass allowlist enforcement — not what this test is about
             patch("app.domains.storage._check_object_allowed"),
         ):
-            from mcp.server.fastmcp import FastMCP
+            from mcp.server.mcpserver import MCPServer as FastMCP
 
             from app.domains.storage import register
 
@@ -322,3 +322,12 @@ class TestRequestContextMutableDefault:
         assert isinstance(ctx, dict)
         assert "request_id" in ctx
         assert "source_ip" in ctx
+
+    def test_caller_context_can_be_restored_after_request(self, monkeypatch):
+        from app.security import auth
+
+        monkeypatch.setattr(auth.settings, "skip_jwt_validation", False)
+        token = auth.set_caller(auth.CallerIdentity(sub="request-user"))
+        auth.reset_caller(token)
+        with pytest.raises(PermissionError, match="No authenticated caller"):
+            auth.get_caller()

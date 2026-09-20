@@ -323,7 +323,7 @@ class TestAllToolsLive:
 
     def test_platform_service_status(self, mcp):
         call, _, _, _ = mcp
-        self._graceful(call, "platform.service_status", {"service_name": "card-fraud-engine"})
+        self._graceful(call, "platform.service_status", {"service_name": "rule-engine-auth"})
 
     def test_platform_service_health(self, mcp):
         call, _, _, _ = mcp
@@ -331,7 +331,7 @@ class TestAllToolsLive:
             "tools/call",
             {
                 "name": "platform.service_health",
-                "arguments": {"service_name": "card-fraud-engine"},
+                "arguments": {"service_name": "rule-engine-auth"},
             },
         )
         assert sc == 200

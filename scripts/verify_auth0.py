@@ -125,6 +125,18 @@ def main(verbose: bool = False) -> None:
             f"missing: {missing}" if missing else "",
         ):
             failures += 1
+        if not _check(
+            "RBAC policy enforcement enabled",
+            rs.get("enforce_policies") is True,
+            "expected enforce_policies=true",
+        ):
+            failures += 1
+        if not _check(
+            "Permissions included in access tokens",
+            rs.get("token_dialect") == "access_token_authz",
+            "expected token_dialect=access_token_authz",
+        ):
+            failures += 1
         if verbose:
             for s in _EXPECTED_SCOPES:
                 icon = "✓" if s in existing_scopes else "✗"

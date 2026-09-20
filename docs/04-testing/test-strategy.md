@@ -43,7 +43,7 @@
 
 - lint ✔ (`uv run ruff check app/ tests/` — 0 errors)
 - format ✔ (`uv run ruff format --check app/ tests/`)
-- unit tests ✔ (`uv run pytest tests/ -v` — 302 tests passing)
+- unit tests ✔ (`uv run pytest tests/ -q` — 318 tests passing)
 - integration tests against local platform stack — partial (backend integration tests exist but require live infra)
 - smoke tests through the actual HTTP MCP endpoint ✔ (`uv run gateway-smoke`)
 

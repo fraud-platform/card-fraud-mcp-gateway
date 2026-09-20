@@ -20,6 +20,18 @@ class TestSecurityHeaders:
         assert message["headers"] == []
 
 
+class TestMcpTransportSecurity:
+    def test_unlisted_host_is_rejected(self):
+        client = TestClient(main.create_app(), raise_server_exceptions=False)
+        response = client.get("/mcp", headers={"Host": "attacker.example"})
+        assert response.status_code == 421
+
+    def test_configured_test_host_reaches_transport(self):
+        client = TestClient(main.create_app(), raise_server_exceptions=False)
+        response = client.get("/mcp", headers={"Host": "testserver"})
+        assert response.status_code != 421
+
+
 class TestRequireSecureCors:
     def test_require_secure_cors_empty(self):
         assert main._require_secure_cors([]) is False
@@ -49,6 +61,20 @@ class TestReadinessEndpoint:
         assert response.status_code == 200
         data = response.json()
         assert "backends" in data
+
+    def test_production_requires_all_backends(self, monkeypatch):
+        monkeypatch.setattr(main.settings, "app_env", "prod")
+        monkeypatch.setattr(main.settings, "required_backends", [])
+        client = TestClient(main.app, raise_server_exceptions=False)
+        response = client.get("/ready")
+        assert response.status_code == 503
+        assert set(response.json()["required_backends"]) == {
+            "postgres",
+            "redis",
+            "kafka",
+            "s3",
+            "platform_api",
+        }
 
 
 class TestCatalogEndpoint:
@@ -82,6 +108,20 @@ class TestCheckBackend:
 
         result = await main._check_backend(checker, configured=True)
         assert result == "error"
+
+    @pytest.mark.asyncio
+    async def test_platform_probe_makes_real_request(self, monkeypatch):
+        class Response:
+            def raise_for_status(self):
+                return None
+
+        class Client:
+            async def get(self, path):
+                assert path == "/api/v1/health"
+                return Response()
+
+        monkeypatch.setattr("app.backends.get_platform_client", lambda: Client())
+        await main._check_platform_connectivity()
 
 
 class TestGetMainMcp:

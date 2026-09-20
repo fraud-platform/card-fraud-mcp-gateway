@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import re
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
 from app.audit import audit_tool, tool_result
 from app.backends import get_pg_pool, get_redis
@@ -40,7 +40,7 @@ def _build_select_sql(table_setting: str, where_clause: str = "", extra: str = "
     """
     columns = _get_ops_columns(table_setting)
     column_list = ", ".join(f'"{col}"' for col in columns)
-    table_expr = _resolve_table_expr(table_setting)
+    table_expr = _resolve_table_expr(table_setting, settings.ops_schema)
 
     sql = f"SELECT {column_list} FROM {table_expr}"
     if where_clause:
@@ -147,7 +147,37 @@ async def load_postgres_investigation_context(
     return context, sources
 
 
-def register(mcp: FastMCP) -> None:
+async def load_transaction_review(
+    pool,
+    transaction_id: str,
+) -> tuple[dict[str, object] | None, list[dict[str, object]]]:
+    """Load a transaction and its reviews using the internal transaction key."""
+    rows = await _fetch_ops_rows(
+        pool,
+        _build_select_sql(settings.ops_transactions_table, "WHERE transaction_id = $1"),
+        transaction_id,
+    )
+    if not rows:
+        return None, []
+
+    transaction = dict(rows[0])
+    internal_id = transaction.get("id")
+    if internal_id is None:
+        raise ValueError("Transaction record is missing its internal id")
+
+    decisions = await _fetch_ops_rows(
+        pool,
+        _build_select_sql(
+            settings.ops_decisions_table,
+            "WHERE transaction_id = $1",
+            "ORDER BY created_at DESC LIMIT 10",
+        ),
+        str(internal_id),
+    )
+    return transaction, [dict(row) for row in decisions]
+
+
+def register(mcp: MCPServer) -> None:
     @mcp.tool(
         name="ops.get_investigation_context",
         description=(
@@ -213,13 +243,12 @@ def register(mcp: FastMCP) -> None:
             "Run a structured investigation workflow. "
             "Types: 'transaction_review', 'case_triage', 'velocity_check'. "
             "Args: investigation_type, target_id. "
-            "Domain: ops | Scope: fraud.ops.investigation.run"
+            "Domain: ops | Read-only | Scope: fraud.ops.investigation.run"
         ),
     )
     @require_scope(
         "fraud.ops.investigation.run",
         domain="ops",
-        read_only=False,
         tool_name="ops.run_investigation",
     )
     @audit_tool("ops")
@@ -239,24 +268,13 @@ def register(mcp: FastMCP) -> None:
             pool = get_pg_pool()
 
             if investigation_type == "transaction_review":
-                rows = await _fetch_ops_rows(
-                    pool,
-                    _build_select_sql(settings.ops_transactions_table, "WHERE transaction_id = $1"),
-                    target_id,
+                transaction, decisions = await load_transaction_review(pool, target_id)
+                result["steps"].append(
+                    {"step": "fetch_transaction", "found": transaction is not None}
                 )
-                result["steps"].append({"step": "fetch_transaction", "found": len(rows) > 0})
-                if rows:
-                    result["transaction"] = dict(rows[0])
-                    decisions = await _fetch_ops_rows(
-                        pool,
-                        _build_select_sql(
-                            settings.ops_decisions_table,
-                            "WHERE transaction_id = $1",
-                            "ORDER BY created_at DESC LIMIT 10",
-                        ),
-                        target_id,
-                    )
-                    result["decisions"] = [dict(r) for r in decisions]
+                if transaction is not None:
+                    result["transaction"] = transaction
+                    result["decisions"] = decisions
                     result["steps"].append({"step": "fetch_decisions", "count": len(decisions)})
 
             elif investigation_type == "case_triage":

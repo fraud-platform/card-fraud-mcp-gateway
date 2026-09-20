@@ -4,12 +4,12 @@ FROM python:3.14-slim AS base
 WORKDIR /app
 
 # Install uv for fast dependency resolution
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+COPY --from=ghcr.io/astral-sh/uv:0.11.26 /uv /usr/local/bin/uv
 
 # Stage 2: Dependencies (cached unless pyproject.toml changes)
 FROM base AS deps
-COPY pyproject.toml ./
-RUN uv sync --no-dev --no-editable
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-dev --no-editable
 
 # Stage 3: Runtime (smaller final image)
 FROM base AS runtime
@@ -33,7 +33,7 @@ EXPOSE 8000
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/ready')"
 
 ENTRYPOINT ["uv", "run", "uvicorn", "app.main:app", \
     "--host", "0.0.0.0", "--port", "8000", "--log-level", "info"]

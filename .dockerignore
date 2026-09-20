@@ -29,7 +29,6 @@ ENV/
 env/
 
 # uv
-uv.lock
 
 # Testing / Linting
 .pytest_cache/

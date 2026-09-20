@@ -45,13 +45,13 @@ Turn platform-owned registry and ownership metadata into first-class MCP tools a
 
 ## Known Gaps
 
-- ✔ Service registry loader from optional `services.yaml` with static fallback
+- ✔ Service registry loader from the canonical mapping-shaped `services.yaml`, with a static fallback only when no contract is available
 - ✔ Platform inventory, service_status, service_health, and ownership_summary tools
 - ✔ Resources for service catalog and ownership summary
 - ❌ **Only `services.yaml` is parsed** — the plan requires parsing `database.yaml`, `messaging.yaml`, `storage.yaml`, `auth.yaml`, and `secrets.yaml` for a normalized metadata model
 - ❌ **No internal normalized metadata model** — platform.py uses a flat dict, not a structured model that other domains can consume for allowlists
 - ❌ **No metadata drift detection** — plan says "detect and surface metadata drift between platform files and gateway registrations"
-- ❌ **Invalid metadata validation** — plan says "invalid metadata should fail startup clearly" but malformed YAML silently falls back to static inventory
+- ✔ **Invalid metadata validation** — malformed present contracts fail closed with a clear startup error instead of falling back
 
 ## Codex Prompt Seed
 

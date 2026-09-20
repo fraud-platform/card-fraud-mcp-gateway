@@ -4,6 +4,9 @@ Auth0 boundary: the gateway uses its own M2M client-credentials application
 and does not perform human/password-realm logins. The development `Local Test
 Client` belongs only to role-specific portal/rule-management testing.
 
+Ops investigation tools use `GATEWAY_OPS_SCHEMA` (default `fraud_gov`) and accept
+the public transaction ID exposed by transaction-management.
+
 ## Documentation Standards
 
 - Keep published docs inside `docs/01-setup` through `docs/07-reference`.
@@ -12,17 +15,19 @@ Client` belongs only to role-specific portal/rule-management testing.
 - Keep architecture, security, and rollout documents current with platform ownership contracts.
 - Keep published tool/resource/prompt counts aligned with the live `/catalog` export.
 - Keep observability docs aligned with the live `/metrics` output and enabled signals.
+- Assistant clients should read the repository `AGENTS.md` instructions.
 
 ## Section Index
 
 ### `01-setup` - Setup
 
 - `01-setup/local-setup.md` — Clone, Doppler config, start gateway, verify
-- `01-setup/auth0-setup-guide.md` — Provision Auth0 resources (automated bootstrap + RBAC step)
+- `01-setup/auth0-setup-guide.md` — Provision and verify Auth0 resources through the automated bootstrap
 - `01-setup/connecting-clients.md` — Connect Claude Code, Copilot, Codex, curl (local + prod)
 
 ### `02-development` - Development
 
+- `02-development/mcp-framework-comparison-and-migration-plan.md` — Official SDK comparison and deferred FastMCP migration plan
 - `02-development/architecture.md`
 - `02-development/implementation-plan-with-codex.md`
 - `02-development/flow-01-foundation-and-bootstrap.md`

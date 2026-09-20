@@ -30,19 +30,19 @@ services:
     container_name: card-fraud-mcp-gateway
     restart: unless-stopped
     ports:
-      - "8005:8000"
+      - "127.0.0.1:8005:8000"
     environment:
       # Runtime environment
       APP_ENV: local
       SECURITY_SKIP_JWT_VALIDATION: "true"
 
       # PostgreSQL (connects to card-fraud-postgres)
-      GATEWAY_PG_DSN: "postgresql://postgres:${POSTGRES_ADMIN_PASSWORD}@card-fraud-postgres:5432/fraud_gov"
+      GATEWAY_PG_DSN: "postgresql://fraud_gov_mcp_reader:${FRAUD_GOV_MCP_READER_PASSWORD:?Set the dedicated read-only gateway database password}@card-fraud-postgres:5432/fraud_gov"
       GATEWAY_PG_POOL_MIN: 2
       GATEWAY_PG_POOL_MAX: 10
       GATEWAY_PG_MAX_ROWS: 500
       GATEWAY_PG_ALLOWED_SCHEMAS: "fraud_gov,public"
-      GATEWAY_PG_ALLOWED_TABLES: "transactions,transaction_cases,transaction_reviews,card_profiles,fraud_rules,velocity_records"
+      GATEWAY_PG_ALLOWED_TABLES: "transactions,transaction_rule_matches,transaction_reviews,analyst_notes,transaction_cases,case_activity_log,rule_fields,rule_field_versions,rule_field_metadata,rules,rule_versions,ruleset_manifest,field_registry_manifest,rulesets,ruleset_versions,ruleset_version_rules,approvals"
 
       # Redis (connects to card-fraud-redis)
       GATEWAY_REDIS_URL: "redis://card-fraud-redis:6379"
@@ -60,8 +60,8 @@ services:
 
       # S3/MinIO (connects to card-fraud-minio)
       GATEWAY_S3_ENDPOINT: "http://card-fraud-minio:9000"
-      GATEWAY_S3_ACCESS_KEY: "${MINIO_ROOT_USER:-minioadmin}"
-      GATEWAY_S3_SECRET_KEY: "${MINIO_ROOT_PASSWORD:-minioadmin}"
+      GATEWAY_S3_ACCESS_KEY: "${FRAUD_GOV_MCP_S3_ACCESS_KEY:?Set the dedicated read-only gateway S3 access key}"
+      GATEWAY_S3_SECRET_KEY: "${FRAUD_GOV_MCP_S3_SECRET_KEY:?Set the dedicated read-only gateway S3 secret key}"
       GATEWAY_S3_REGION: us-east-1
       GATEWAY_S3_MAX_OBJECT_BYTES: 1000000
       GATEWAY_S3_ALLOWED_BUCKETS: "fraud-gov-artifacts"
@@ -92,7 +92,7 @@ services:
     networks:
       - card-fraud-network
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/ready')"]
       interval: 30s
       timeout: 5s
       retries: 3

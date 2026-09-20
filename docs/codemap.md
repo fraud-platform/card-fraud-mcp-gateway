@@ -8,6 +8,10 @@ login is performed by this repository.
 
 `card-fraud-mcp-gateway` provides a single enterprise MCP surface over the Card Fraud suite.
 
+The runtime uses the official MCP Python SDK `MCPServer`. See
+`docs/02-development/mcp-framework-comparison-and-migration-plan.md` for the
+comparison with standalone FastMCP and the explicitly deferred migration plan.
+
 ## Runtime Structure
 
 ```
@@ -15,7 +19,7 @@ app/
   __init__.py               # Package marker
   main.py                   # ASGI app factory, auth middleware, health endpoints, CLI
   config.py                 # Pydantic settings from GATEWAY_* env vars
-  server.py                 # FastMCP server factory — registers all tools/resources/prompts
+  server.py                 # MCPServer factory — registers all tools/resources/prompts
   backends.py               # Backend pool lifecycle (Postgres, Redis, Kafka, S3, Platform)
   audit.py                  # Structured audit logging (structlog) + OpenTelemetry tracing
   metrics.py                # Prometheus counters/histograms + /metrics payload renderer
@@ -25,7 +29,7 @@ app/
     policy.py               # @require_scope decorator, ToolPolicy registry
     allowlist.py            # Config-driven allowlist enforcement (schemas, prefixes, topics, buckets)
     ratelimit.py            # Redis sliding-window rate limiter with in-memory fallback
-    redaction.py            # Secret pattern redaction (card numbers, tokens, SSNs, etc.)
+    redaction.py            # Recursive secret/PII redaction (card numbers, tokens, SSNs, etc.)
   domains/
     __init__.py
     platform.py             # 4 tools: inventory, service_status, service_health, ownership
@@ -34,7 +38,7 @@ app/
     kafka.py                # 4 tools: list_topics, describe_topic, peek_messages, consumer_lag
                             #   + _ConsumerKey/_CachedConsumer cache (60 s TTL, keyed by config)
     storage.py              # 4 tools: list_buckets, list_objects, head_object, get_object
-    ops.py                  # 2 tools: get_investigation_context, run_investigation
+    ops.py                  # 2 tools; configured-schema lookups map public IDs to review FKs
   resources.py              # 7 MCP resources (fraud:// URIs)
   prompts.py                # 5 MCP prompt templates
 tests/
@@ -56,13 +60,13 @@ tests/
 
 ## Key Patterns
 
-- **Tool registration**: Each domain module exports `register(mcp: FastMCP)` called by `server.py`
+- **Tool registration**: Each domain module exports `register(mcp: MCPServer)` called by `server.py`
 - **Auth flow**: HTTP middleware → JWT validation → contextvar → `@require_scope` check
 - **Resource guards**: MCP resources enforce the same domain scopes and allowlists as the tool layer via `ensure_scope()`
 - **S3 access**: Always `async with get_s3_session().client("s3", ...) as s3:` — session is shared, client is per-call
 - **Audit trail**: `@audit_tool` decorator logs every invocation with timing and sanitized args
 - **Backend lifecycle**: `backends.init_all()` / `backends.close_all()` managed by ASGI lifespan
-- **Redaction**: All tool outputs pass through `redact()` before returning to clients
+- **Redaction**: Tool outputs, audit arguments, and Sentry payloads use recursive redaction helpers before leaving the process
 - **Metrics**: `/metrics` exposes request, auth, tool, truncation, backend-init, and resource-failure signals
 
 ## External Source Of Truth

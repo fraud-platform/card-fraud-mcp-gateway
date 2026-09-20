@@ -154,7 +154,7 @@ The `gateway-export-catalog` CLI command is implemented.
 ### Approval Framework — Scaffolded Only (Flow 02, Flow 10)
 
 `ToolPolicy.approval_required` exists but nothing reads or enforces it.
-`ops.run_investigation` is `read_only=False` but passes through without any approval gate.
+`ops.run_investigation` is read-only in Phase 1 and uses the distinct `fraud.ops.investigation.run` scope; future mutations require a separate approval-gated tool.
 
 **Resolution:** Implement enforcement or document it as Phase 2 scope.
 

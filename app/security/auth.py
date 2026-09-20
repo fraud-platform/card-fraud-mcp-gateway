@@ -56,6 +56,14 @@ _jwks_cached_at: float = 0.0
 _jwks_lock = asyncio.Lock()
 
 
+class JwksUnavailableError(RuntimeError):
+    """Raised when the identity provider's signing keys cannot be fetched."""
+
+
+class InvalidTokenError(jwt.InvalidTokenError):
+    """Raised for malformed or otherwise invalid bearer tokens."""
+
+
 async def _fetch_jwks(force_refresh: bool = False) -> dict[str, Any]:
     """Fetch JWKS with thread-safe caching to prevent thundering herd."""
     global _jwks_cache, _jwks_cached_at
@@ -81,22 +89,37 @@ async def _fetch_jwks(force_refresh: bool = False) -> dict[str, Any]:
             return _jwks_cache
 
         url = f"https://{settings.auth0_domain}/.well-known/jwks.json"
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.get(url)
-            resp.raise_for_status()
-            _jwks_cache = resp.json()
-            _jwks_cached_at = now
-            return _jwks_cache
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.get(url)
+                resp.raise_for_status()
+                payload = resp.json()
+        except (httpx.HTTPError, ValueError, TypeError) as exc:
+            # Do not leak provider URLs, response bodies, or transport details to callers.
+            raise JwksUnavailableError from exc
+        if not isinstance(payload, dict) or not isinstance(payload.get("keys"), list):
+            raise JwksUnavailableError
+        _jwks_cache = payload
+        _jwks_cached_at = now
+        return _jwks_cache
 
 
 async def validate_token(token: str) -> CallerIdentity:
     """Validate a JWT and return caller identity."""
+    try:
+        unverified_header = jwt.get_unverified_header(token)
+    except jwt.InvalidTokenError as exc:
+        raise InvalidTokenError from exc
+
+    kid = unverified_header.get("kid")
+    if not isinstance(kid, str) or not kid:
+        raise InvalidTokenError
+
     jwks = await _fetch_jwks()
-    unverified_header = jwt.get_unverified_header(token)
 
     rsa_key: dict[str, Any] = {}
     for key in jwks.get("keys", []):
-        if key["kid"] == unverified_header.get("kid"):
+        if isinstance(key, dict) and key.get("kid") == kid:
             rsa_key = {k: key[k] for k in ("kty", "kid", "use", "n", "e") if k in key}
             break
 
@@ -105,21 +128,24 @@ async def validate_token(token: str) -> CallerIdentity:
         # before rejecting to avoid an unnecessary auth outage.
         jwks = await _fetch_jwks(force_refresh=True)
         for key in jwks.get("keys", []):
-            if key["kid"] == unverified_header.get("kid"):
+            if isinstance(key, dict) and key.get("kid") == kid:
                 rsa_key = {k: key[k] for k in ("kty", "kid", "use", "n", "e") if k in key}
                 break
 
     if not rsa_key:
-        raise PermissionError("Unable to find appropriate signing key")
+        raise InvalidTokenError
 
-    public_key = jwt.algorithms.RSAAlgorithm.from_jwk(rsa_key)
-    claims = jwt.decode(
-        token,
-        public_key,
-        algorithms=settings.auth0_algorithms,
-        audience=settings.auth0_audience,
-        issuer=f"https://{settings.auth0_domain}/",
-    )
+    try:
+        public_key = jwt.algorithms.RSAAlgorithm.from_jwk(rsa_key)
+        claims = jwt.decode(
+            token,
+            public_key,
+            algorithms=settings.auth0_algorithms,
+            audience=settings.auth0_audience,
+            issuer=f"https://{settings.auth0_domain}/",
+        )
+    except (jwt.InvalidTokenError, ValueError, TypeError) as exc:
+        raise InvalidTokenError from exc
 
     scope_str = claims.get("scope", "")
     scopes = frozenset(s.strip() for s in scope_str.split() if s.strip())
@@ -172,6 +198,11 @@ async def authenticate_request(request: Request) -> CallerIdentity:
 
 def set_caller(identity: CallerIdentity) -> contextvars.Token[CallerIdentity]:
     return _auth_context.set(identity)
+
+
+def reset_caller(token: contextvars.Token[CallerIdentity]) -> None:
+    """Restore the caller context that existed before the request."""
+    _auth_context.reset(token)
 
 
 def get_caller() -> CallerIdentity:

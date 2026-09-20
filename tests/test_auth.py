@@ -4,13 +4,20 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, patch
 
+import jwt
 import pytest
 from starlette.requests import Request
 from starlette.testclient import TestClient
 
 from app.main import create_app
 from app.security import auth
-from app.security.auth import CallerIdentity, authenticate_request, validate_token
+from app.security.auth import (
+    CallerIdentity,
+    InvalidTokenError,
+    JwksUnavailableError,
+    authenticate_request,
+    validate_token,
+)
 
 
 def test_mcp_requires_bearer_token(monkeypatch):
@@ -36,6 +43,30 @@ def test_rate_limited_request_returns_429(monkeypatch):
     assert resp.status_code == 429
     assert resp.headers["Retry-After"] == "60"
     assert resp.json()["error"] == "rate_limited"
+
+
+def test_invalid_token_is_sanitized_401():
+    client = TestClient(create_app(), raise_server_exceptions=False)
+    with patch("app.main.authenticate_request", AsyncMock(side_effect=InvalidTokenError("secret"))):
+        resp = client.get("/mcp", headers={"Authorization": "Bearer invalid"})
+    assert resp.status_code == 401
+    assert resp.json() == {"error": "unauthorized", "detail": "Invalid or missing credentials."}
+    assert "secret" not in resp.text
+
+
+def test_jwks_failure_is_sanitized_503():
+    client = TestClient(create_app(), raise_server_exceptions=False)
+    with patch(
+        "app.main.authenticate_request",
+        AsyncMock(side_effect=JwksUnavailableError("provider-url-and-secret")),
+    ):
+        resp = client.get("/mcp", headers={"Authorization": "Bearer token"})
+    assert resp.status_code == 503
+    assert resp.json() == {
+        "error": "authentication_unavailable",
+        "detail": "Authentication service unavailable.",
+    }
+    assert "provider-url" not in resp.text
 
 
 @pytest.mark.asyncio
@@ -73,6 +104,52 @@ async def test_validate_token_parses_claims(monkeypatch):
     assert caller.client_id == "client-123"
     assert caller.email == "user@example.com"
     assert caller.scopes == frozenset({"fraud.db.read", "fraud.redis.read"})
+
+
+@pytest.mark.asyncio
+async def test_validate_token_rejects_unknown_kid(monkeypatch):
+    monkeypatch.setattr(auth, "_fetch_jwks", AsyncMock(return_value={"keys": []}))
+    monkeypatch.setattr(auth.jwt, "get_unverified_header", lambda _token: {"kid": "missing"})
+    with pytest.raises(InvalidTokenError):
+        await validate_token("token")
+
+
+@pytest.mark.asyncio
+async def test_validate_token_normalizes_jwt_claim_errors(monkeypatch):
+    monkeypatch.setattr(
+        auth,
+        "_fetch_jwks",
+        AsyncMock(return_value={"keys": [{"kid": "kid-1", "kty": "RSA", "n": "n", "e": "e"}]}),
+    )
+    monkeypatch.setattr(auth.jwt, "get_unverified_header", lambda _token: {"kid": "kid-1"})
+    monkeypatch.setattr(auth.jwt.algorithms.RSAAlgorithm, "from_jwk", lambda _jwk: "public-key")
+    monkeypatch.setattr(
+        auth.jwt,
+        "decode",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(jwt.ExpiredSignatureError()),
+    )
+    with pytest.raises(InvalidTokenError):
+        await validate_token("token")
+
+
+@pytest.mark.asyncio
+async def test_fetch_jwks_translates_transport_failure(monkeypatch):
+    class FailingClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def get(self, _url):
+            raise auth.httpx.ConnectError("secret provider detail")
+
+    monkeypatch.setattr(auth.httpx, "AsyncClient", lambda timeout: FailingClient())
+    monkeypatch.setattr(auth.settings, "auth0_domain", "example.auth0.com")
+    auth._jwks_cache = None
+    auth._jwks_cached_at = 0.0
+    with pytest.raises(JwksUnavailableError):
+        await auth._fetch_jwks()
 
 
 @pytest.mark.asyncio

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from typing import Any
 
 _SECRET_PATTERNS = re.compile(
@@ -11,13 +12,13 @@ _SECRET_PATTERNS = re.compile(
     r"\s*[=:]\s*)(?P<kv_val>\S+)"
     r"|(?P<bearer>bearer\s+[A-Za-z0-9\-._~+/]+=*)"
     r"|(?P<email>[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})"
-    r"|(?P<phone>"
+    r"|(?P<phone>(?<![0-9A-Fa-f-])"
     r"\b(?:"
     r"(?:\+?\d{1,3}[-.\s])?(?:\(\d{2,4}\)|\d{2,4})[-.\s]\d{3,4}[-.\s]\d{4}"
     r"|\(\d{2,4}\)[-.\s]?\d{3,4}[-.\s]?\d{4}"
     r"|\d{3,4}[-\s]\d{4}"
     r")\b"
-    r")"
+    r")(?![0-9A-Fa-f-])"
     r"|(?P<pem>-----BEGIN [A-Z ]+-----.*?-----END [A-Z ]+-----)"
     r"|(?P<cc>"
     r"\b(?:"
@@ -70,21 +71,23 @@ def redact(text: str) -> str:
     return _SECRET_PATTERNS.sub(_repl, text)
 
 
+def redact_value(value: Any, *, key: str = "") -> Any:
+    """Recursively redact mappings and container values without mutating input."""
+    if key and any(s in key.lower() for s in _SENSITIVE_KEYS):
+        return "***REDACTED***"
+    if isinstance(value, str):
+        return redact(value)
+    if isinstance(value, Mapping):
+        return {str(k): redact_value(v, key=str(k)) for k, v in value.items()}
+    if isinstance(value, list):
+        return [redact_value(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(redact_value(item) for item in value)
+    if isinstance(value, set):
+        return {redact_value(item) for item in value}
+    return value
+
+
 def redact_dict(data: dict[str, Any]) -> dict[str, Any]:
-    """Redact sensitive values in a dictionary."""
-    result: dict[str, Any] = {}
-    for key, value in data.items():
-        if any(s in key.lower() for s in _SENSITIVE_KEYS):
-            result[key] = "***REDACTED***"
-        elif isinstance(value, str):
-            result[key] = redact(value)
-        elif isinstance(value, dict):
-            result[key] = redact_dict(value)
-        elif isinstance(value, list):
-            result[key] = [
-                redact_dict(v) if isinstance(v, dict) else redact(v) if isinstance(v, str) else v
-                for v in value
-            ]
-        else:
-            result[key] = value
-    return result
+    """Redact sensitive values in a dictionary and nested containers."""
+    return redact_value(data)

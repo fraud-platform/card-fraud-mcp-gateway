@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from urllib.parse import quote
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
 from app.audit import audit_tool, tool_result
 from app.config import AppEnvironment, settings
@@ -24,10 +24,11 @@ _DEFAULT_INVENTORY: dict[str, dict] = {
 
 def _inventory_candidates() -> list[Path]:
     """Candidate control-plane inventory files, in precedence order."""
-    candidates: list[Path] = []
     if settings.services_file:
-        candidates.append(Path(settings.services_file))
+        # An explicit override is authoritative, including when it is missing.
+        return [Path(settings.services_file)]
 
+    candidates: list[Path] = []
     repo_root = Path(__file__).resolve().parents[2]
     candidates.append(repo_root.parent / "card-fraud-platform" / "control-plane" / "services.yaml")
     candidates.append(repo_root / "control-plane" / "services.yaml")
@@ -43,19 +44,48 @@ def _inventory_candidates() -> list[Path]:
     return unique
 
 
-def _load_inventory_from_file(path: Path) -> dict[str, dict] | None:
-    """Load inventory shape from a platform services.yaml file."""
+def _load_inventory_from_file(path: Path) -> dict[str, dict]:
+    """Load and normalize the canonical mapping-shaped services contract.
+
+    A configured/present contract is authoritative: malformed content raises instead
+    of silently reverting to the stale built-in inventory.
+    """
     import yaml
 
-    with path.open() as f:
+    with path.open(encoding="utf-8") as f:
         data = yaml.safe_load(f)
-    if isinstance(data, dict) and "services" in data and isinstance(data["services"], list):
-        return {
-            svc["name"]: {k: v for k, v in svc.items() if k != "name"}
-            for svc in data["services"]
-            if isinstance(svc, dict) and "name" in svc
-        }
-    return None
+    if not isinstance(data, dict) or not isinstance(data.get("services"), dict):
+        raise ValueError("Platform service contract must define services as a mapping")
+
+    inventory: dict[str, dict] = {}
+    for name, raw in data["services"].items():
+        if not isinstance(name, str) or not name.strip() or not isinstance(raw, dict):
+            raise ValueError("Platform service names and metadata must be mappings")
+        required = ("owner", "runtime", "port", "container", "health", "auth_model")
+        missing = [key for key in required if key not in raw]
+        if missing:
+            raise ValueError(f"Service {name!r} missing required fields: {', '.join(missing)}")
+        if (
+            not isinstance(raw["owner"], str)
+            or not raw["owner"].strip()
+            or not isinstance(raw["runtime"], str)
+            or not isinstance(raw["container"], str)
+        ):
+            raise ValueError(f"Service {name!r} has invalid owner/runtime/container")
+        if isinstance(raw["port"], bool) or not isinstance(raw["port"], int) or raw["port"] <= 0:
+            raise ValueError(f"Service {name!r} has invalid port")
+        health = raw["health"]
+        if not isinstance(health, dict) or not isinstance(health.get("path"), str):
+            raise ValueError(f"Service {name!r} has invalid health metadata")
+
+        # Keep the contract's metadata intact while exposing the stable type field used
+        # by gateway tools.
+        info = dict(raw)
+        info.setdefault("type", raw["runtime"])
+        inventory[name] = info
+    if not inventory:
+        raise ValueError("Platform service contract contains no services")
+    return inventory
 
 
 def _load_inventory_and_source() -> tuple[dict[str, dict], str]:
@@ -64,11 +94,10 @@ def _load_inventory_and_source() -> tuple[dict[str, dict], str]:
         if not path.exists():
             continue
         try:
-            inventory = _load_inventory_from_file(path)
-        except Exception:
-            continue
-        if inventory:
-            return inventory, str(path)
+            return _load_inventory_from_file(path), str(path)
+        except (OSError, ValueError, TypeError) as exc:
+            # A file that exists is an explicit contract and must fail closed.
+            raise RuntimeError(f"Invalid platform service contract: {path}") from exc
 
     if settings.app_env == AppEnvironment.PROD:
         raise RuntimeError(
@@ -92,7 +121,7 @@ def _fetch_service_endpoint(service_name: str, suffix: str) -> str:
     return f"/api/v1/services/{quote(service_name, safe='')}/{suffix}"
 
 
-def register(mcp: FastMCP) -> None:
+def register(mcp: MCPServer) -> None:
     @mcp.tool(
         name="platform.inventory",
         description=(

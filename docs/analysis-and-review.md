@@ -34,13 +34,13 @@ Both bugs have been fixed. The gateway was also subjected to a comprehensive har
 
 ### Overall Verdict
 
-**Phase 1 is production-ready for read-only access.** The gateway correctly enforces authentication, authorization, rate limiting, audit logging, secret redaction, SQL safety, request size limits, and Prometheus metrics export. The 297-test suite passes in full. The two critical runtime bugs that would have prevented any production use have been resolved. Outstanding gaps are clearly scoped to Phase 3 (write operations, approval workflows) and are not regressions.
+**Phase 1 is production-ready for read-only access.** The gateway correctly enforces authentication, authorization, rate limiting, audit logging, recursive secret redaction, SQL safety, request size limits, and Prometheus metrics export. The current test suite passes in full. The two critical runtime bugs that would have prevented any production use have been resolved.
 
 ---
 
 ## 2. Architecture Deep-Dive
 
-The gateway is a single Python package (`app/`) built on FastMCP and Starlette. All components are async-first and dependency-free from one another except through explicit imports at registration time.
+The gateway is a single Python package (`app/`) built on MCPServer 2.x and Starlette. All components are async-first and dependency-free from one another except through explicit imports at registration time.
 
 ### Layer Overview
 
@@ -71,7 +71,7 @@ Starlette Router
 
 **RequestSizeLimitMiddleware** is an ASGI-native middleware that rejects requests before they reach the application. It operates in two modes: fast path (rejects by `Content-Length` header before reading any bytes) and streaming path (counts bytes as they arrive via a wrapped `receive` callable and raises `_RequestTooLargeError` if the running total exceeds `GATEWAY_MAX_REQUEST_BODY_BYTES`, defaulting to 1 MB). Security headers are injected at this layer regardless of whether the request is rejected.
 
-**AuthMiddleware** is also ASGI-native. It extracts the `x-request-id` header (generating a UUID if absent) and the client IP, stores them in a `ContextVar` for the duration of the request, and then performs JWT validation via `authenticate_request()`. Three paths skip authentication: `/health`, `/ready`, and `/catalog`. On auth failure, a 401 JSON response with security headers is returned. On success, a per-client rate-limit check runs before the request is forwarded. On rate-limit exhaustion, a 429 response with `Retry-After: 60` is returned. The `finally` block always resets the `ContextVar` token, preventing identity bleed between requests.
+**AuthMiddleware** is also ASGI-native. It extracts the `x-request-id` header (generating a UUID if absent) and the client IP, stores them in a `ContextVar` for the duration of the request, and then performs JWT validation via `authenticate_request()`. Four paths skip authentication: `/health`, `/ready`, `/catalog`, and `/metrics`. Invalid credentials return a sanitized 401, while a JWKS provider outage returns a sanitized 503. On success, a per-client rate-limit check runs before the request is forwarded. On rate-limit exhaustion, a 429 response with `Retry-After: 60` is returned. The `finally` block always resets both request and caller `ContextVar` tokens, preventing identity bleed between requests.
 
 **`_add_security_headers()`** appends five security headers to every response that does not already contain them: `x-content-type-options: nosniff`, `x-frame-options: DENY`, `referrer-policy: no-referrer`, `cache-control: no-store`, and `strict-transport-security: max-age=63072000; includeSubDomains`. The implementation appends rather than replaces, explicitly preserving duplicate headers (such as multiple `Set-Cookie` values) that might be legitimately set by upstream handlers.
 
@@ -79,17 +79,17 @@ Starlette Router
 
 **`/health`** returns `{"status": "ok", "service": "card-fraud-mcp-gateway"}`. It is a pure liveness check with no backend dependencies.
 
-**`/ready`** probes all five backends concurrently (using `asyncio.gather` semantics through `_check_backend()`). Each backend reports `"ok"`, `"not_configured"`, or `"error"`. The overall `ready` field is true when all backends are either `ok` or `not_configured`. The S3 readiness check is a real connectivity probe (`list_buckets()`) rather than a configuration existence check — this was a fix applied during the hardening pass (see section 3).
+**`/ready`** probes all five backends concurrently with `asyncio.gather()`. Each backend reports `"ok"`, `"not_configured"`, or `"error"`. Local/test environments require configured backends plus any names in `GATEWAY_REQUIRED_BACKENDS`; production requires all five. Both S3 (`list_buckets()`) and the platform API (`GET /api/v1/health`) use real connectivity probes.
 
 **`/catalog`** returns the full tool/resource/prompt manifest as JSON. It reads `ToolPolicy` entries from the in-memory policy registry and introspects the FastMCP `_resource_manager` and `_prompt_manager` directly. This endpoint has no authentication, making it straightforward to inspect in monitoring tools and CI pipelines. See section 5 for the security trade-off discussion around this choice.
 
 **CLI entry points** are `dev()`, `check()`, `smoke()`, and `export_catalog()`, registered as `doppler-local`, `gateway-check`, `gateway-smoke`, and `gateway-export-catalog` in `pyproject.toml`. The `dev()` function also enforces that `reload=True` is only used when the host is loopback, preventing accidental hot-reload in non-local environments.
 
-### 2.2 `app/server.py` — FastMCP Server Factory
+### 2.2 `app/server.py` — MCPServer Factory
 
-`create_mcp_server()` builds the `FastMCP` instance and registers all domain modules, resources, and prompts. It calls `clear_policies()` before registration to prevent stale `ToolPolicy` entries from accumulating across test runs where the function is called multiple times.
+`create_mcp_server()` builds the `MCPServer` instance and registers all domain modules, resources, and prompts. It calls `clear_policies()` before registration to prevent stale `ToolPolicy` entries from accumulating across test runs where the function is called multiple times.
 
-The `FastMCP` constructor receives `transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False)`. This is the fix for Bug 2 (see section 3). The rationale is documented inline: the gateway is an enterprise remote server that binds to `0.0.0.0`, enforces its own JWT authentication, and runs behind a TLS-terminating reverse proxy. The FastMCP DNS rebinding protection is intended for local desktop AI tools that accept connections only on loopback; it is not appropriate for a production API server.
+The MCP 2 transport keeps DNS-rebinding protection enabled and receives explicit allowed hosts from `GATEWAY_MCP_ALLOWED_HOSTS`; allowed browser origins reuse the configured CORS origins. This permits the known local and container hostnames while requiring production deployments to declare their public gateway hostname.
 
 Domain registration order: platform, postgres, redis, kafka, storage, ops. Resources and prompts are registered last. All six domain modules are imported inside `create_mcp_server()` to avoid circular imports at module level.
 
@@ -209,7 +209,7 @@ The Lua script returns a three-element array: `[allowed, current_count, remainin
 | `aws` | AWS access key IDs (AKIA...) | `***REDACTED_AWS_KEY***` |
 | `conn` | DSN connection strings (`://user:pass@`) | `://***:***@` |
 
-`redact_dict(data)` recursively walks a dict, applying `redact()` to string values and replacing entire values when the key matches a set of sensitive key names (`password`, `secret`, `token`, `api_key`, `apikey`, `credential`, `auth`).
+`redact_value(data)` recursively walks dictionaries, lists, tuples, and sets, applying `redact()` to string values and replacing entire values when the key matches a set of sensitive key names (`password`, `secret`, `token`, `api_key`, `apikey`, `credential`, `auth`). The same helper is reused by audit and Sentry sanitization.
 
 All tool output that contacts external backends passes through `redact()` before being returned. This is a defense-in-depth measure: the backend credentials are themselves never exposed to tool code, but the tool outputs may contain user-supplied data that contains sensitive values.
 
@@ -227,7 +227,7 @@ When `enforce_allowlists=True` (the default) and an allowlist is configured but 
 
 ### 2.11 `app/domains/platform.py` — 4 Tools
 
-The platform domain provides a static service inventory with an optional override from a YAML file (`GATEWAY_SERVICES_FILE`). The built-in inventory contains six services: `card-fraud-platform`, `card-fraud-api`, `card-fraud-engine`, `card-fraud-dashboard`, `card-fraud-ops-analyst-agent`, and `card-fraud-mcp-gateway`.
+The platform domain consumes the canonical mapping-shaped registry from `card-fraud-platform/control-plane/services.yaml`, with `GATEWAY_SERVICES_FILE` as an explicit override. A present but malformed contract fails closed instead of reverting to stale defaults. A static development fallback is used only when no contract file is available.
 
 | Tool | Scope | Description |
 |------|-------|-------------|
@@ -314,11 +314,11 @@ The ops domain provides cross-domain investigation workflows that query PostgreS
 | Tool | Scope | `read_only` | Description |
 |------|-------|-------------|-------------|
 | `ops.get_investigation_context` | `fraud.ops.investigation.read` | `True` | Gathers transaction/case/score/flags context |
-| `ops.run_investigation` | `fraud.ops.investigation.run` | `False` | Runs structured investigation workflows |
+| `ops.run_investigation` | `fraud.ops.investigation.run` | `True` | Runs bounded read-only investigation workflows |
 
 `ops.get_investigation_context` accepts a `transaction_id` or `case_id` (at least one required), queries PostgreSQL for the corresponding record(s), and queries Redis for `fraud:score:{id}` and `fraud:flags:{id}`. Both backend calls are graceful: if PostgreSQL or Redis is unavailable, a note field is added to the result rather than an exception being raised. This allows partial results to be returned when only some backends are healthy.
 
-`ops.run_investigation` supports three investigation types: `transaction_review` (fetches transaction and its decisions), `case_triage` (fetches case record), and `velocity_check` (counts transactions for a card in the last 24 hours). This tool is marked `read_only=False` in its `ToolPolicy` because the investigation type implies future write capabilities (e.g., updating case status). In Phase 1, all three types are read-only queries.
+`ops.run_investigation` supports three investigation types: `transaction_review` (fetches transaction and its decisions), `case_triage` (fetches case record), and `velocity_check` (counts transactions for a card in the last 24 hours). It is classified read-only because all three types execute bounded SELECT queries. The distinct `.run` scope preserves a future workflow permission boundary.
 
 Both tools use `_build_select_sql()` to construct queries with explicit column lists from config rather than `SELECT *`. Table names from config are validated through `_validate_identifier()` and the PostgreSQL allowlist before being embedded in SQL strings, preventing identifier injection.
 
@@ -393,22 +393,20 @@ By calling `sm.run()` directly from the parent Starlette lifespan context manage
 
 When the gateway is deployed in any production or staging environment and an MCP client connects with a `Host: gateway.example.com` header (as all HTTP/1.1 clients must), FastMCP rejects the request before it reaches the gateway's own auth middleware.
 
-**Fix (in `app/server.py`, `create_mcp_server()`):**
+**Fix (in `app/main.py`, `create_app()`):**
 
 ```python
-mcp = FastMCP(
-    "card-fraud-gateway",
-    ...,
-    transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
+mcp_app = mcp.streamable_http_app(
+    host=settings.host,
+    transport_security=TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=settings.mcp_allowed_hosts,
+        allowed_origins=settings.cors_origins,
+    ),
 )
 ```
 
-**Justification:** DNS rebinding protection solves the problem of a browser making cross-origin requests to a locally bound server. The Card Fraud MCP Gateway is not a locally bound server. It:
-1. Binds to `0.0.0.0` and is accessible over a network.
-2. Enforces Auth0 JWT authentication on every MCP request via its own middleware.
-3. Is deployed behind a TLS-terminating reverse proxy that validates the hostname.
-
-The Auth0 JWT authentication already provides a stronger defense against unauthorized access than DNS rebinding protection. A request that spoofs a `Host` header but lacks a valid JWT will be rejected by the `AuthMiddleware` before reaching any tool handler.
+**Justification:** Remote deployments cannot rely on the SDK's loopback-only defaults, but disabling Host validation entirely would weaken the MCP 2 transport. An operator-controlled allowlist supports local Docker names and production DNS names without accepting arbitrary `Host` headers.
 
 **Test Coverage:** `test_e2e_runtime.py::TestMcpSession::test_initialize` and all subsequent MCP protocol tests validate that the session can be established from a `TestClient`, which presents an arbitrary host header. Without this fix, all those tests would receive 421 responses.
 
@@ -543,9 +541,9 @@ No unhandled exceptions should produce HTTP 500 responses on the `/mcp` endpoint
 
 ### 5.1 No Write or Mutation Tools (Phase 3 Pending)
 
-The gateway is read-only in Phase 1. The `ops.run_investigation` tool is marked `read_only=False` in its `ToolPolicy` and requires the `fraud.ops.investigation.run` scope, establishing the authorization boundary for future write operations. However, the tool itself performs only read queries in Phase 1.
+The gateway is read-only in Phase 1. The `ops.run_investigation` tool requires the `fraud.ops.investigation.run` scope and performs only bounded read queries.
 
-The `approval_required` field on `ToolPolicy` is scaffolded but unenforced. Phase 3 should implement an approval workflow that checks this field before permitting `read_only=False` tool calls, integrating with the platform's human-in-the-loop review system.
+The `approval_required` field on `ToolPolicy` is scaffolded but unenforced. Phase 3 should implement an approval workflow before any mutation tool is introduced.
 
 **Recommendation:** Before adding any write tools, implement `approval_required` enforcement in `_check_scope()` or as a separate decorator layer. Write tools should also emit distinct audit log events and may warrant per-call logging to an immutable audit store (not just stdout).
 
@@ -557,9 +555,9 @@ Clients that support custom Bearer token injection (Cursor, most programmatic cl
 
 **Recommendation:** In Phase 2, add the MCP OAuth discovery endpoints (`/.well-known/oauth-authorization-server`, `/authorize`, `/token`) that delegate to Auth0's Authorization Code + PKCE flow. This enables zero-configuration client onboarding.
 
-### 5.3 `ops.run_investigation` Is RW but Has No Approval Workflow
+### 5.3 Future investigation writes require approval
 
-As noted in section 5.1, `ops.run_investigation` is the only tool with `read_only=False`. In Phase 1 it only reads data. In Phase 3, when write capabilities are added (e.g., updating case status, flagging transactions), the absence of an approval workflow creates a risk that an AI agent could make changes without human review.
+`ops.run_investigation` is intentionally read-only today. If future investigation workflows add mutations (e.g., updating case status or flagging transactions), they must be split into explicit approval-gated tools before implementation.
 
 **Recommendation:** Block `ops.run_investigation` from any operation that modifies data until the approval workflow in `approval_required` is implemented and enforced.
 
@@ -589,12 +587,12 @@ An attacker who discovers the gateway can learn which scopes exist, which tools 
 
 ## 6. Test Results Summary
 
-**Total: 297 tests, all passing.**
+**Current test suite: all tests passing; run `uv run pytest tests/ -q` for the exact count.**
 
 | Suite | Tests | Category |
 |-------|-------|----------|
 | `test_policy.py` | 8 | Unit — scope enforcement, policy registration |
-| `test_redaction.py` | 12 | Unit — redaction patterns for all secret types |
+| `test_redaction.py` | 21 | Unit — redaction patterns for all secret types and nested containers |
 | `test_sql_safety.py` | 24 | Unit — SQL validation, keyword blocking, multi-statement detection |
 | `test_allowlists.py` | 15 | Unit — exact/prefix/path allowlist enforcement, empty/configured states |
 | `test_app.py` | 11 | Integration — health, readiness, catalog, size limit middleware |
@@ -605,7 +603,7 @@ An attacker who discovers the gateway can learn which scopes exist, which tools 
 | `test_auth.py` | 10 | Unit — JWT validation, JWKS cache, local identity, context vars |
 | `test_config.py` | 8 | Unit — settings parsing, list field formats, prod JWT bypass guard |
 | `test_backends.py` | 9 | Unit — BackendManager lifecycle, init_all, close_all |
-| `test_platform_domain.py` | 8 | Unit — inventory, service status/health graceful degradation |
+| `test_platform_domain.py` | 9 | Unit — canonical inventory validation and service status/health graceful degradation |
 | `test_postgres_domain.py` | 14 | Unit — list schemas/tables/describe, SQL safety, allowlist enforcement |
 | `test_postgres_query_access.py` | 12 | Unit — EXPLAIN fallback, relation cache, CTE/UNION/subquery detection |
 | `test_redis_domain.py` | 9 | Unit — scan, get (all types), ttl, type |
@@ -625,7 +623,7 @@ The 32 end-to-end tests are organized into six classes and exercise the real `cr
 
 **`TestHttpEndpoints` (7 tests)**
 - `GET /health` returns 200 with correct service name
-- `GET /ready` with no backends configured returns `ready: true` with all backends `not_configured`
+- In local mode, `GET /ready` with no backends configured returns `ready: true`; production requires all five backends
 - `GET /catalog` returns exactly 22 tools, 7 resources, and 5 prompts
 - `/catalog` contains all 22 expected tool names by exact match
 - All five security headers are present on `/health` responses
@@ -658,8 +656,8 @@ The 32 end-to-end tests are organized into six classes and exercise the real `cr
 - Policy registry contains exactly 22 entries after `create_app()`
 - All tool scopes start with `fraud.`
 - Complete scope matrix verification (all 22 tool-to-scope mappings checked by name)
-- All tools are `read_only=True` except `ops.run_investigation`
-- `ops.run_investigation` has `read_only=False`
+- All tools are `read_only=True`
+- `ops.run_investigation` is read-only and uses the distinct `.run` scope
 - Caller with only `fraud.db.read` scope is denied when attempting a `fraud.kafka.read` tool
 - Caller with `fraud.kafka.read` scope is permitted for `fraud.kafka.read` tools
 
